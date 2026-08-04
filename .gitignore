@@ -24,6 +24,8 @@ docs/_build/
 
 # Editors and OS
 .DS_Store
+__MACOSX/
+._*
 .idea/
 .vscode/
 

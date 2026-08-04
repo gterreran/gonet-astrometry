@@ -32,7 +32,6 @@ def load_gonet_image(path: Path) -> ImageFrame:
     NotImplementedError
         Until the GONet Wizard image API has been inspected and integrated.
     """
-
     raise NotImplementedError("GONet Wizard image adapter is not implemented")
 
 
@@ -54,5 +53,4 @@ def load_grid_calibration(path: Path) -> GridCalibration:
     NotImplementedError
         Until the Grid calibration serialization contract has been inspected.
     """
-
     raise NotImplementedError("Grid calibration adapter is not implemented")

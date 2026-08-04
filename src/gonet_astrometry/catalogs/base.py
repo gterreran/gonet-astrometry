@@ -50,5 +50,4 @@ class StarCatalog(Protocol):
         limiting_magnitude: float,
     ) -> tuple[CatalogStar, ...]:
         """Return stars bright enough to be useful for an observing session."""
-
         ...

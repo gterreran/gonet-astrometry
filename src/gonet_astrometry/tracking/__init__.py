@@ -1,1 +1,1 @@
-"""Tracking components for GONet astrometric calibration."""
+"""Temporal source-association and star-tracking tools."""

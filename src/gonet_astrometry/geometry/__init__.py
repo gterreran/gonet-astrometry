@@ -1,1 +1,1 @@
-"""Geometry components for GONet astrometric calibration."""
+"""Camera and celestial geometry tools."""

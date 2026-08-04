@@ -1,1 +1,1 @@
-"""Solving components for GONet astrometric calibration."""
+"""Astrometric matching and optimization tools."""

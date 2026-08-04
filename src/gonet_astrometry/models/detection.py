@@ -73,5 +73,4 @@ class DetectionCatalog:
 
     def __len__(self) -> int:
         """Return the number of detections."""
-
         return len(self.detections)

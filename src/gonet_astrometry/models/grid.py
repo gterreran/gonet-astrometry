@@ -29,7 +29,6 @@ class PixelRayTransform(Protocol):
         numpy.ndarray
             Array with shape ``x.shape + (3,)`` containing unit vectors.
         """
-
         ...
 
 

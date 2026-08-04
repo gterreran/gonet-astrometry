@@ -10,7 +10,6 @@ from gonet_astrometry import __version__
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the command-line parser."""
-
     parser = argparse.ArgumentParser(
         prog="gonet-astrometry",
         description="Astrometric calibration of wide-field GONet images.",
@@ -36,7 +35,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     int
         Process exit status.
     """
-
     parser = build_parser()
     parser.parse_args(argv)
     return 0

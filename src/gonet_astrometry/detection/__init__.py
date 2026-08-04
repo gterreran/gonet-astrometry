@@ -1,1 +1,1 @@
-"""Detection components for GONet astrometric calibration."""
+"""Source-detection interfaces and implementations."""

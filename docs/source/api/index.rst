@@ -1,19 +1,16 @@
 API reference
 =============
 
-.. autosummary::
-   :toctree: generated
-   :recursive:
+The API reference is generated directly from the public module docstrings.
+The package-level modules are grouped below by responsibility.
 
-   gonet_astrometry
-   gonet_astrometry.adapters.gonet_wizard
-   gonet_astrometry.catalogs.base
-   gonet_astrometry.cli
-   gonet_astrometry.detection.base
-   gonet_astrometry.io.base
-   gonet_astrometry.models.detection
-   gonet_astrometry.models.frame
-   gonet_astrometry.models.grid
-   gonet_astrometry.models.solution
-   gonet_astrometry.models.track
-   gonet_astrometry.pipeline
+.. toctree::
+   :maxdepth: 2
+
+   models
+   io
+   adapters
+   detection
+   catalogs
+   pipeline
+   cli

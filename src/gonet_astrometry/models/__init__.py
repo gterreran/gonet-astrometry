@@ -1,1 +1,1 @@
-"""Models components for GONet astrometric calibration."""
+"""Core immutable data models."""

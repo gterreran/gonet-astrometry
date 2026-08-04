@@ -1,1 +1,1 @@
-"""Catalogs components for GONet astrometric calibration."""
+"""Star-catalog interfaces and implementations."""

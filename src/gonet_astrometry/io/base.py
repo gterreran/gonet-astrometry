@@ -14,7 +14,6 @@ class ImageLoader(Protocol):
 
     def load(self, path: Path) -> ImageFrame:
         """Load one image and its astrometric metadata."""
-
         ...
 
 
@@ -23,5 +22,4 @@ class GridCalibrationLoader(Protocol):
 
     def load(self, path: Path) -> GridCalibration:
         """Load one Grid calibration from disk."""
-
         ...

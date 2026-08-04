@@ -1,1 +1,1 @@
-"""Adapters components for GONet astrometric calibration."""
+"""Compatibility adapters for GONet Wizard integrations."""

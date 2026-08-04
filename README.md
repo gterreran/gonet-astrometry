@@ -27,38 +27,23 @@ fisheye image.
 
 ## Development setup
 
+Activate any compatible Python 3.10+ environment, including
+`gonet_wizard_dev`, and install the package in editable mode:
+
 ```bash
-conda create -n gonet_astrometry python=3.10
-conda activate gonet_astrometry
-python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
-pre-commit install
-pytest
-ruff check .
-black --check .
-mypy src/gonet_astrometry
-sphinx-build -W -b html docs/source docs/_build/html
 ```
 
-## Repository workflow
+Run the validation commands documented in
+`docs/source/developer_guide/contributing.rst` before opening a pull request.
 
-Development work should branch from `dev`. Changes are validated locally and
-merged through focused pull requests. `main` remains the stable integration
-branch.
+## Contributing
+
+Development branches from `dev` and is merged through focused pull requests.
+New behavior requires tests, and public APIs require complete NumPy-style
+docstrings. The developer guide contains the full checklist and documentation
+standards.
 
 ## License
 
 MIT. See `LICENSE`.
-
-## Creating the local and GitHub repositories
-
-After extracting the scaffold and reviewing the GitHub owner placeholders in
-`pyproject.toml`, run one of:
-
-```bash
-./scripts/initialize_repository.sh private
-./scripts/initialize_repository.sh public
-```
-
-The script creates the initial `main` commit, creates and pushes the GitHub
-repository, creates `dev`, pushes it, and leaves the working tree on `dev`.

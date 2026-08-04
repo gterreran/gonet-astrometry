@@ -88,7 +88,6 @@ class ImageMetadata:
     @property
     def exposure_midpoint(self) -> datetime:
         """Return the timezone-aware midpoint of the exposure."""
-
         return self.exposure_start + timedelta(seconds=self.exposure_duration_s / 2)
 
 
@@ -127,5 +126,4 @@ class ImageFrame:
     @property
     def shape(self) -> tuple[int, int]:
         """Return the image shape as ``(rows, columns)``."""
-
-        return self.data.shape
+        return self.data.shape[0], self.data.shape[1]

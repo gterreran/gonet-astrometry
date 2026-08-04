@@ -28,4 +28,4 @@ jobs:
       - name: Mypy
         run: mypy src/gonet_astrometry
       - name: Documentation
-        run: sphinx-build -W -b html docs/source docs/_build/html
+        run: sphinx-build -W --keep-going -b html docs/source docs/_build/html

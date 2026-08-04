@@ -48,7 +48,6 @@ class AstrometryPipeline:
         ValueError
             If no input paths are supplied or a path is repeated.
         """
-
         if not paths:
             raise ValueError("At least one image path is required")
         identifiers = tuple(str(path) for path in paths)
@@ -64,7 +63,6 @@ class AstrometryPipeline:
         frames: dict[str, ImageFrame],
     ) -> dict[str, DetectionCatalog]:
         """Run source detection on loaded frames."""
-
         return {
             identifier: self.source_detector.detect(identifier, frame)
             for identifier, frame in frames.items()

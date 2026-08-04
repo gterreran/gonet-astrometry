@@ -1,1 +1,1 @@
-"""Io components for GONet astrometric calibration."""
+"""Input/output interfaces and implementations."""

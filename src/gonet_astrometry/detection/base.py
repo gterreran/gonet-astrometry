@@ -14,10 +14,8 @@ class SourceDetector(Protocol):
     @property
     def name(self) -> str:
         """Return a stable detector name for provenance records."""
-
         ...
 
     def detect(self, frame_identifier: str, frame: ImageFrame) -> DetectionCatalog:
         """Detect source candidates in one native GONet image."""
-
         ...

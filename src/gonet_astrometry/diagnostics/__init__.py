@@ -1,1 +1,1 @@
-"""Diagnostics components for GONet astrometric calibration."""
+"""Calibration diagnostics and reporting tools."""
