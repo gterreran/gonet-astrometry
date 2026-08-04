@@ -1,0 +1,146 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gonet-astrometry"
+dynamic = ["version"]
+description = "Astrometric calibration of wide-field GONet images."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "GONet Astrometry contributors"},
+]
+keywords = ["astronomy", "astrometry", "fisheye", "all-sky", "GONet"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+  "astropy>=5.3",
+  "numpy>=1.23",
+  "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+detection = [
+  "photutils>=1.9",
+  "sep>=1.2",
+]
+docs = [
+  "furo>=2024.1.29",
+  "numpydoc>=1.6",
+  "sphinx>=7",
+  "sphinx-autodoc-typehints>=2",
+]
+dev = [
+  "black>=24",
+  "coverage[toml]>=7",
+  "mypy>=1.8",
+  "pre-commit>=3.6",
+  "pytest>=8",
+  "pytest-cov>=5",
+  "ruff>=0.5",
+  "furo>=2024.1.29",
+  "numpydoc>=1.6",
+  "photutils>=1.9",
+  "sep>=1.2",
+  "sphinx>=7",
+  "sphinx-autodoc-typehints>=2",
+]
+
+[project.scripts]
+gonet-astrometry = "gonet_astrometry.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/gterreran/gonet-astrometry"
+Issues = "https://github.com/gterreran/gonet-astrometry/issues"
+Repository = "https://github.com/gterreran/gonet-astrometry"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+gonet_astrometry = ["py.typed"]
+
+[tool.setuptools_scm]
+write_to = "src/gonet_astrometry/_version.py"
+fallback_version = "0.0.0"
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "B",
+  "C4",
+  "D",
+  "E",
+  "F",
+  "I",
+  "N",
+  "UP",
+  "W",
+]
+ignore = [
+  "D105",
+  "D107",
+  "D203",
+  "D213",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "integration: tests spanning multiple package components",
+  "regression: tests protecting behavior observed in real GONet data",
+  "synthetic: tests based on generated images or star fields",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["gonet_astrometry"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 90
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  '\.\.\.',
+]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["gonet_astrometry"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["astropy.*", "photutils.*", "sep.*", "scipy.*"]
+ignore_missing_imports = true
