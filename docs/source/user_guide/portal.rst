@@ -73,10 +73,33 @@ The channel selector exposes ``blue``, ``green1``, ``green2``, and ``red``.
 figure applies percentile display limits, but the channel values are neither
 modified nor resampled.
 
-Metadata parsing is disabled in this first native-loading increment. The next
-adapter step will define how Wizard metadata maps into the validated
-:class:`~gonet_astrometry.models.frame.ImageMetadata` and
-:class:`~gonet_astrometry.models.frame.ImageFrame` models.
+Portal channel display keeps metadata parsing disabled so switching images and
+channels remains lightweight. The scientific loader is a separate path: it
+loads the selected image with Wizard metadata enabled, reconstructs the complete
+native Bayer mosaic, and returns a validated
+:class:`~gonet_astrometry.models.frame.ImageFrame`.
+
+Scientific frame loading
+------------------------
+
+The scientific adapter combines the four sparse Wizard Bayer planes into one
+full-resolution BGGR sensor array. Each sensor location must be populated by
+exactly one channel; overlapping or missing samples are rejected rather than
+silently repaired.
+
+Required astrometric metadata are normalized into
+:class:`~gonet_astrometry.models.frame.ImageMetadata`:
+
+* exposure start in UTC;
+* strictly positive exposure duration;
+* observing latitude and longitude; and
+* optional elevation, defaulting to zero when it is absent.
+
+The adapter accepts common Wizard and EXIF-style key names, decimal or
+DMS-formatted GPS coordinates, and rational exposure values. After an explicit
+Unix value in Wizard metadata, it prefers the ten-digit Unix timestamp embedded
+in a standard GONet filename to timezone-naive EXIF datetime fields. File
+creation and modification times are never used.
 
 Activity terminal
 -----------------

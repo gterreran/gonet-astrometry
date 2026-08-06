@@ -8,10 +8,12 @@ calibration defects.
 Native sensor coordinates
 -------------------------
 
-Images remain in their original two-dimensional Bayer mosaic. Coordinates are
-zero-indexed floating-point sensor positions. ``x`` increases with array column
-and ``y`` increases with array row unless the inspected GONet Wizard contract
-requires an explicitly documented conversion.
+Scientific frames remain in the original two-dimensional BGGR Bayer mosaic.
+The Wizard compact channels are expanded through the Wizard's own Bayer-plane
+mapping and combined without demosaicing or interpolation. Coordinates are
+zero-indexed sensor positions: ``x`` increases with array column and ``y``
+increases with array row. Portal channel previews use compact per-channel
+coordinates and are therefore display products rather than scientific frames.
 
 Camera rays
 -----------

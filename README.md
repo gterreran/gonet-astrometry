@@ -54,6 +54,13 @@ image object and displays one compact Bayer channel without a separate JPEG
 preview or Pillow-based loading path. The ``gonet_wizard_dev`` environment must
 therefore contain the current GONet Wizard package.
 
+The scientific adapter separately loads the selected file with Wizard metadata
+enabled, reconstructs the full-resolution native BGGR mosaic, and returns a
+validated ``ImageFrame``. Explicit Unix metadata is used first, followed by
+the camera-generated Unix token in the filename; timezone-naive EXIF datetime
+fields are used only when an offset is available. Filesystem timestamps are
+never used. Latitude and longitude must be present in the parsed image metadata.
+
 Run the validation commands documented in
 `docs/source/developer_guide/contributing.rst` before opening a pull request.
 

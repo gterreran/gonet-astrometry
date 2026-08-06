@@ -9,6 +9,8 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Scientific GONet ``ImageFrame`` adapter with full BGGR mosaic reconstruction,
+  strict exposure/GPS metadata normalization, and a concrete pipeline loader.
 - Multi-image portal session with lightweight file/folder discovery and a
   single lazily loaded native image cache.
 - Sidebar calibration workspace with a provisional star-detection algorithm
@@ -27,6 +29,8 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Fixed
 
+- Prefer the camera-generated Unix timestamp in GONet filenames to
+  timezone-naive EXIF datetime fields during scientific frame loading.
 - Corrected the Sphinx version configuration so it always contains text.
 - Replaced recursive autosummary generation with explicit API pages to avoid
   duplicate toctrees and unresolved object references.
