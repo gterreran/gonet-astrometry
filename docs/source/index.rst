@@ -17,5 +17,6 @@ selected.
    concepts/system_design
    concepts/coordinate_systems
    concepts/development_roadmap
+   user_guide/portal
    developer_guide/contributing
    api/index

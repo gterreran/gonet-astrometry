@@ -15,7 +15,8 @@ multi-frame star tracking and a joint camera/astrometric solution.
 - associate stellar detections across images from a common observing session;
 - recover the celestial rotation axis in camera coordinates;
 - match tracks to a star catalog and refine the geometric calibration;
-- expose numerical functionality independently of any future GUI;
+- provide a Dash portal for interactive image inspection and calibration;
+- keep numerical functionality independent of the GUI;
 - maintain comprehensive tests and Sphinx API documentation.
 
 ## Design principle
@@ -33,6 +34,25 @@ Activate any compatible Python 3.10+ environment, including
 ```bash
 python -m pip install -e ".[dev]"
 ```
+
+Start the desktop calibration portal with an optional image or folder:
+
+```bash
+gonet-astrometry portal --input /path/to/image-or-folder
+```
+
+The command starts Dash locally and opens the interface in an independent
+pywebview window. The portal includes a read-only activity terminal for runtime
+feedback and an Exit control for closing the desktop window. Use
+``gonet-astrometry portal --server-only`` when a normal browser-based server is
+preferable during development.
+
+The sidebar accepts multiple files and folders, discovers candidate original
+GONet ``.jpg`` files without parsing all of them, and loads only the selected
+file through ``GONetFileRaw.from_file``. The server caches at most one native
+image object and displays one compact Bayer channel without a separate JPEG
+preview or Pillow-based loading path. The ``gonet_wizard_dev`` environment must
+therefore contain the current GONet Wizard package.
 
 Run the validation commands documented in
 `docs/source/developer_guide/contributing.rst` before opening a pull request.

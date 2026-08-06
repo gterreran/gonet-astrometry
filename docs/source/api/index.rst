@@ -13,4 +13,5 @@ The package-level modules are grouped below by responsibility.
    detection
    catalogs
    pipeline
+   portal
    cli

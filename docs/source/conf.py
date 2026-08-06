@@ -38,6 +38,15 @@ nitpicky = True
 # annotation while retaining strict reference checking everywhere else.
 nitpick_ignore = [
     ("py:class", "numpy.float64"),
+    ("py:class", "numpy.uint8"),
+]
+
+# Dash and Plotly do not publish complete Sphinx inventories for the public
+# classes exposed in the portal API annotations. Keep strict reference checks
+# for the rest of the project while allowing those third-party GUI types.
+nitpick_ignore_regex = [
+    ("py:class", r"dash\..*"),
+    ("py:class", r"plotly\..*"),
 ]
 
 intersphinx_mapping = {
