@@ -19,11 +19,20 @@ from urllib.request import urlopen
 
 from dash import Dash
 
-from gonet_astrometry.adapters.gonet_wizard import load_gonet_file_raw
+from gonet_astrometry.adapters.gonet_wizard import (
+    load_gonet_file_raw,
+    load_gonet_image,
+)
+from gonet_astrometry.detection.registry import create_detector
 from gonet_astrometry.portal.callbacks import register_callbacks
 from gonet_astrometry.portal.layout import build_layout
 from gonet_astrometry.portal.logging_utils import configure_portal_logging
-from gonet_astrometry.portal.session import PortalSession, RawLoader
+from gonet_astrometry.portal.session import (
+    DetectorFactory,
+    FrameLoader,
+    PortalSession,
+    RawLoader,
+)
 from gonet_astrometry.portal.system import register_system_callbacks
 
 DEFAULT_HOST = "127.0.0.1"
@@ -40,6 +49,8 @@ def create_app(
     *,
     initial_path: Path | None = None,
     raw_loader: RawLoader = load_gonet_file_raw,
+    frame_loader: FrameLoader = load_gonet_image,
+    detector_factory: DetectorFactory = create_detector,
     log_level: int = logging.INFO,
 ) -> Dash:
     """Create and configure the Dash portal.
@@ -50,6 +61,10 @@ def create_app(
         Optional image file or directory used to seed input discovery.
     raw_loader
         Native GONet loading function used by the image callback.
+    frame_loader
+        Scientific frame loader used by source detection.
+    detector_factory
+        Factory used to construct the selected source detector.
     log_level
         Logging level captured by the portal activity terminal.
 
@@ -59,7 +74,11 @@ def create_app(
         Configured Dash application.
     """
     configure_portal_logging(level=log_level)
-    session = PortalSession(loader=raw_loader)
+    session = PortalSession(
+        loader=raw_loader,
+        frame_loader=frame_loader,
+        detector_factory=detector_factory,
+    )
     if initial_path is not None:
         result = session.discover((initial_path,), recursive=True)
         if not result.files:

@@ -8,16 +8,12 @@ from pathlib import Path
 from dash import dcc, html
 
 from gonet_astrometry.adapters.gonet_wizard import GONET_CHANNELS
+from gonet_astrometry.detection.registry import detector_options
 from gonet_astrometry.portal import ids
 from gonet_astrometry.portal.figures import empty_image_figure
 
-DETECTOR_OPTIONS = (
-    ("Not configured", "unconfigured"),
-    ("Photutils segmentation", "photutils-segmentation"),
-    ("SEP extraction", "sep"),
-    ("DAOStarFinder", "dao-star-finder"),
-)
-"""Provisional source-detection choices exposed by the portal."""
+DETECTOR_OPTIONS = detector_options()
+"""Registered source-detection choices exposed by the portal."""
 
 
 def build_layout(
@@ -201,6 +197,22 @@ def _sidebar(
                         "Select another channel to redraw the cached current image.",
                         style=_help_style(),
                     ),
+                    dcc.Checklist(
+                        id=ids.SHOW_DETECTION_MASKS,
+                        options=[
+                            {
+                                "label": " Show field and bright-region masks",
+                                "value": "show",
+                            }
+                        ],
+                        value=["show"],
+                        style={"marginTop": "0.65rem", "fontSize": "0.82rem"},
+                    ),
+                    html.Div(
+                        "Mask boundaries appear after source detection has prepared "
+                        "the full-resolution frame.",
+                        style=_help_style(),
+                    ),
                 ],
             ),
             _control_group(
@@ -213,18 +225,78 @@ def _sidebar(
                     ),
                     dcc.Dropdown(
                         id=ids.DETECTOR,
-                        options=[
-                            {"label": label, "value": value}
-                            for label, value in DETECTOR_OPTIONS
-                        ],
-                        value="unconfigured",
+                        options=DETECTOR_OPTIONS,
+                        value="sep",
                         clearable=False,
                         persistence=True,
                         persistence_type="session",
                     ),
                     html.Div(
-                        "Provisional selector; detector settings will be added in "
-                        "the source-detection milestone.",
+                        [
+                            html.Label(
+                                "Threshold (σ)",
+                                htmlFor=ids.DETECTION_THRESHOLD,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.DETECTION_THRESHOLD,
+                                type="number",
+                                min=0.1,
+                                step=0.5,
+                                value=5.0,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                            html.Label(
+                                "Approximate FWHM (sensor px)",
+                                htmlFor=ids.DETECTION_FWHM,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.DETECTION_FWHM,
+                                type="number",
+                                min=0.5,
+                                step=0.5,
+                                value=3.0,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                            html.Label(
+                                "Minimum connected pixels",
+                                htmlFor=ids.DETECTION_MIN_PIXELS,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.DETECTION_MIN_PIXELS,
+                                type="number",
+                                min=1,
+                                step=1,
+                                value=5,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                        ],
+                        style={
+                            "display": "grid",
+                            "gap": "0.4rem",
+                            "marginTop": "0.65rem",
+                        },
+                    ),
+                    html.Button(
+                        "Detect sources",
+                        id=ids.DETECT_SOURCES,
+                        n_clicks=0,
+                        style=_primary_button_style(),
+                    ),
+                    html.Div(
+                        "Run a detector on the selected full-resolution Bayer frame.",
+                        id=ids.DETECTION_STATUS,
+                        role="status",
+                        style=_status_style(),
+                    ),
+                    html.Div(
+                        "All backends share Bayer-parity normalization and return "
+                        "native full-sensor coordinates.",
                         style=_help_style(),
                     ),
                 ],
@@ -351,6 +423,9 @@ def _terminal_panel() -> html.Section:
                     "lineHeight": "1.45",
                     "backgroundColor": "#030712",
                     "color": "#d1d5db",
+                    "userSelect": "text",
+                    "WebkitUserSelect": "text",
+                    "cursor": "text",
                 },
             ),
             dcc.Interval(id=ids.LOG_POLL_INTERVAL, interval=500, n_intervals=0),

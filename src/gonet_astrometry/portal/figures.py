@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from math import ceil
+
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
+from scipy.ndimage import binary_erosion
 
 from gonet_astrometry.adapters.gonet_wizard import GONetChannel
+from gonet_astrometry.models.detection import DetectionCatalog
+
+_MAX_MASK_POINTS = 6000
 
 
 def empty_image_figure(message: str = "Load a GONet image to begin.") -> go.Figure:
@@ -47,8 +53,14 @@ def channel_image_figure(
     *,
     channel: GONetChannel,
     source_name: str,
+    detections: DetectionCatalog | None = None,
+    field_mask: NDArray[np.bool_] | None = None,
+    dynamic_mask: NDArray[np.bool_] | None = None,
 ) -> go.Figure:
     """Create an interactive grayscale figure for one native GONet channel.
+
+    Full-sensor detections and masks are mapped to compact-channel coordinates
+    only for visualization. Their scientific coordinates remain unchanged.
 
     Parameters
     ----------
@@ -58,11 +70,17 @@ def channel_image_figure(
         Channel represented by ``data``.
     source_name
         Source name used to preserve the user's zoom state per image/channel.
+    detections
+        Optional full-sensor detection catalog.
+    field_mask
+        Optional full-sensor mask with ``True`` inside the usable field.
+    dynamic_mask
+        Optional full-sensor mask with ``True`` for bright contaminants.
 
     Returns
     -------
     plotly.graph_objects.Figure
-        Heatmap with native compact-channel row and column coordinates.
+        Heatmap with optional compact-coordinate mask and detection overlays.
     """
     zmin, zmax = _display_limits(data)
     figure = go.Figure(
@@ -88,7 +106,103 @@ def channel_image_figure(
         autorange="reversed",
         scaleanchor="x",
     )
+
+    if field_mask is not None:
+        _add_mask_boundary(
+            figure,
+            _compact_field_mask(field_mask),
+            color="#22d3ee",
+            name="Usable field boundary",
+        )
+    if dynamic_mask is not None:
+        _add_mask_boundary(
+            figure,
+            _compact_dynamic_mask(dynamic_mask),
+            color="#f472b6",
+            name="Bright-region mask",
+        )
+
+    if detections is not None and detections.detections:
+        figure.add_trace(
+            go.Scattergl(
+                x=[detection.x / 2.0 for detection in detections.detections],
+                y=[detection.y / 2.0 for detection in detections.detections],
+                mode="markers",
+                marker={
+                    "symbol": "circle-open",
+                    "size": 10,
+                    "color": "#f97316",
+                    "line": {"width": 1.5},
+                },
+                customdata=[
+                    [detection.identifier, detection.signal_to_noise]
+                    for detection in detections.detections
+                ],
+                hovertemplate=(
+                    "source=%{customdata[0]}<br>"
+                    "sensor x=%{x:.2f} × 2<br>"
+                    "sensor y=%{y:.2f} × 2<br>"
+                    "S/N=%{customdata[1]:.2f}<extra></extra>"
+                ),
+                name="Detections",
+                showlegend=False,
+            )
+        )
     return figure
+
+
+def _add_mask_boundary(
+    figure: go.Figure,
+    mask: NDArray[np.bool_],
+    *,
+    color: str,
+    name: str,
+) -> None:
+    """Add a decimated compact-coordinate boundary for a nontrivial mask."""
+    if not np.any(mask) or np.all(mask):
+        return
+    boundary = mask & ~binary_erosion(mask, border_value=0)
+    rows, columns = np.nonzero(boundary)
+    if rows.size == 0:
+        return
+    step = max(1, ceil(rows.size / _MAX_MASK_POINTS))
+    figure.add_trace(
+        go.Scattergl(
+            x=columns[::step],
+            y=rows[::step],
+            mode="markers",
+            marker={"size": 3, "color": color, "opacity": 0.9},
+            hoverinfo="skip",
+            name=name,
+            showlegend=True,
+        )
+    )
+
+
+def _compact_field_mask(mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
+    """Require all four full-sensor pixels in a compact quad to be usable."""
+    height = mask.shape[0] // 2
+    width = mask.shape[1] // 2
+    return np.asarray(
+        mask[0 : 2 * height : 2, 0 : 2 * width : 2]
+        & mask[0 : 2 * height : 2, 1 : 2 * width : 2]
+        & mask[1 : 2 * height : 2, 0 : 2 * width : 2]
+        & mask[1 : 2 * height : 2, 1 : 2 * width : 2],
+        dtype=np.bool_,
+    )
+
+
+def _compact_dynamic_mask(mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
+    """Mark a compact quad when any full-sensor pixel is dynamically masked."""
+    height = mask.shape[0] // 2
+    width = mask.shape[1] // 2
+    return np.asarray(
+        mask[0 : 2 * height : 2, 0 : 2 * width : 2]
+        | mask[0 : 2 * height : 2, 1 : 2 * width : 2]
+        | mask[1 : 2 * height : 2, 0 : 2 * width : 2]
+        | mask[1 : 2 * height : 2, 1 : 2 * width : 2],
+        dtype=np.bool_,
+    )
 
 
 def _display_limits(data: NDArray[np.float64]) -> tuple[float, float]:

@@ -32,11 +32,12 @@ autodoc_typehints = "description"
 numpydoc_show_class_members = False
 nitpicky = True
 
-# ``sphinx-autodoc-typehints`` renders ``NDArray[np.float64]`` using the
-# fully qualified scalar name. NumPy's intersphinx inventory does not expose
-# ``numpy.float64`` as a Python class target, so ignore only that known, valid
-# annotation while retaining strict reference checking everywhere else.
+# ``sphinx-autodoc-typehints`` renders NumPy scalar parameters in ``NDArray``
+# annotations as fully qualified class targets. NumPy's intersphinx inventory
+# does not expose every scalar name, so ignore only the known valid annotations
+# used by the public API while retaining strict checks everywhere else.
 nitpick_ignore = [
+    ("py:class", "numpy.bool_"),
     ("py:class", "numpy.float64"),
     ("py:class", "numpy.uint8"),
 ]

@@ -39,3 +39,54 @@ def test_channel_image_figure_handles_constant_and_nonfinite_data() -> None:
 
     assert constant.data[0].zmax > constant.data[0].zmin
     assert (nonfinite.data[0].zmin, nonfinite.data[0].zmax) == (0.0, 1.0)
+
+
+def test_channel_image_figure_overlays_full_sensor_detections() -> None:
+    from gonet_astrometry.models.detection import Detection, DetectionCatalog
+
+    catalog = DetectionCatalog(
+        "frame.jpg",
+        (
+            Detection(
+                identifier=1,
+                x=20.0,
+                y=10.0,
+                flux=15.0,
+                signal_to_noise=7.0,
+                x_uncertainty=0.1,
+                y_uncertainty=0.1,
+            ),
+        ),
+        "test",
+    )
+
+    figure = channel_image_figure(
+        np.ones((20, 30), dtype=np.float64),
+        channel="green1",
+        source_name="frame.jpg",
+        detections=catalog,
+    )
+
+    assert len(figure.data) == 2
+    assert figure.data[1].type == "scattergl"
+    assert tuple(figure.data[1].x) == (10.0,)
+    assert tuple(figure.data[1].y) == (5.0,)
+
+
+def test_channel_image_figure_overlays_mask_boundaries() -> None:
+    field_mask = np.zeros((20, 24), dtype=bool)
+    field_mask[4:18, 4:22] = True
+    dynamic_mask = np.zeros((20, 24), dtype=bool)
+    dynamic_mask[10:16, 14:20] = True
+
+    figure = channel_image_figure(
+        np.ones((10, 12), dtype=np.float64),
+        channel="green1",
+        source_name="frame.jpg",
+        field_mask=field_mask,
+        dynamic_mask=dynamic_mask,
+    )
+
+    assert len(figure.data) == 3
+    assert figure.data[1].name == "Usable field boundary"
+    assert figure.data[2].name == "Bright-region mask"

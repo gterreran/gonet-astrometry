@@ -9,6 +9,17 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Mask-aware local Bayer preprocessing with an automatically inferred fisheye
+  footprint, tiled sigma-clipped background/noise maps, dynamic bright-region
+  masking, and optional portal overlays.
+- Shared prepared-image execution so portal detector comparisons reuse the same
+  preprocessing result and preserve mask diagnostics server-side.
+- Pluggable source-detection registry with SciPy local maxima, Photutils
+  segmentation, DAOStarFinder, and SEP backends.
+- Per-run source-detection timing with separate frame-load, backend-setup,
+  detector, total, and candidate-throughput measurements.
+- Shared full-resolution Bayer-parity normalization, detector configuration,
+  portal execution controls, server-side catalog caching, and image overlays.
 - Scientific GONet ``ImageFrame`` adapter with full BGGR mosaic reconstruction,
   strict exposure/GPS metadata normalization, and a concrete pipeline loader.
 - Multi-image portal session with lightweight file/folder discovery and a

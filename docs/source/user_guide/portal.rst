@@ -50,15 +50,15 @@ All interactive controls are grouped in the left sidebar:
 * source files and folders;
 * recursive candidate discovery;
 * current-image selection and loading;
-* native Bayer-channel selection;
-* a provisional star-detection algorithm selector;
+* native Bayer-channel selection and detection-mask overlays;
+* a pluggable star-detection algorithm selector;
 * current-image information; and
 * the desktop Exit action.
 
 The large right-hand area is reserved for image inspection and the activity
-terminal. The detector selector is intentionally provisional and does not yet
-run a backend; its configuration controls will be implemented with the first
-source-detection backend.
+terminal. Detection masks can be shown or hidden after a source-detection run.
+The cyan boundary marks the provisional usable field, while magenta points mark
+large dynamic bright-region exclusions.
 
 Native channel display
 ----------------------
@@ -117,3 +117,76 @@ The ``Exit`` button requests closure through the ``WebviewAPI`` bridge exposed
 by the desktop launcher. In ``--server-only`` mode there is no pywebview window
 to close, so the button leaves the server running and records a warning in the
 activity terminal instead.
+
+Source detection
+----------------
+
+The star-detection sidebar runs one of four registered backends on the selected
+scientific frame:
+
+* ``SciPy local maxima`` provides a deterministic baseline using Gaussian
+  smoothing and non-maximum suppression;
+* ``Photutils segmentation`` detects connected regions and can deblend
+  overlapping sources;
+* ``DAOStarFinder`` applies the Photutils DAOFIND point-source algorithm; and
+* ``SEP extraction`` exposes Source Extractor-style detection and deblending.
+
+All backends receive one common full-resolution detection image. The four native
+Bayer parities are processed independently, which reduces fixed color-channel
+sensitivity differences without demosaicing, interpolation, or coordinate
+resampling.
+
+Before background estimation, a provisional geometric mask separates the
+illuminated fisheye footprint from the dark rectangular sensor exterior. The
+largest connected illuminated region is filled and eroded inward so detector
+kernels do not straddle the uncertain optical rim. If the image does not contain
+enough center-to-corner contrast to infer a reliable footprint, the preprocessor
+falls back to the input validity mask rather than inventing a boundary.
+
+Within the usable field, each Bayer parity is divided into coarse boxes.
+Sigma-clipped medians and robust noise estimates are interpolated into smooth
+local background and noise maps. This makes the detection threshold local to
+the sky brightness and vignetting instead of allowing the black exterior, Moon,
+horizon glow, or broad gradients to determine one global statistic.
+
+After normalization, only large connected regions above a high significance
+threshold are dynamically masked and dilated. The minimum-area requirement is
+intended to retain isolated bright stars while excluding extended contaminants
+such as the Moon core and saturated artificial lights. The geometric and dynamic
+masks remain separate diagnostics and are cached with the latest detection run.
+SEP is the default portal backend, while every registered backend remains
+available for comparison.
+
+The shared controls are:
+
+``Threshold``
+    Detection threshold in approximate background-noise sigma units.
+
+``Approximate FWHM``
+    Expected source width in full native sensor pixels. Point-source and
+    smoothing backends use this value directly.
+
+``Minimum connected pixels``
+    Minimum source area used by Photutils segmentation and SEP. Other backends
+    retain the setting in the common configuration but do not use it directly.
+
+The resulting :class:`~gonet_astrometry.models.detection.DetectionCatalog` is
+kept server-side. Detection coordinates remain in the full sensor system. For
+visual inspection, the portal divides them by two before drawing markers over
+the selected compact Bayer-channel image. Switching display channels reuses the
+same catalog; selecting a different file invalidates it.
+
+Detector timing
+~~~~~~~~~~~~~~~
+
+Each successful run records separate wall-clock durations for scientific-frame
+loading, detector construction, shared mask-aware preprocessing,
+backend-specific execution, and the complete request. Backend time is the
+primary algorithm-comparison value shown in the sidebar. It starts only after
+the common significance image is ready, so all algorithms are compared against
+identical prepared data. The activity terminal reports the full breakdown,
+candidate count, and candidates per backend second.
+
+The first invocation of an optional backend can include Python module import
+cost in its setup or backend duration. Repeat runs therefore provide a useful
+warm-cache comparison in addition to the cold-start measurement.

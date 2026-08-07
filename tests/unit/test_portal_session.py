@@ -76,3 +76,127 @@ def test_session_preserves_cached_file_when_rediscovered(tmp_path: Path) -> None
 
     assert session.load(selected) is loaded
     assert calls == [selected.resolve()]
+
+
+def test_session_caches_scientific_frame_and_detection_catalog(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    from gonet_astrometry.detection.config import DetectionConfig
+    from gonet_astrometry.models.detection import DetectionCatalog
+    from gonet_astrometry.models.frame import (
+        ImageFrame,
+        ImageMetadata,
+        ObserverLocation,
+    )
+
+    selected = tmp_path / "selected.jpg"
+    selected.touch()
+    frame_calls: list[Path] = []
+    detector_calls: list[tuple[str, str]] = []
+    metadata = ImageMetadata(
+        datetime(2026, 8, 6, tzinfo=timezone.utc),
+        10.0,
+        ObserverLocation(0.0, 0.0),
+    )
+    frame = ImageFrame(np.ones((4, 4)), metadata)
+
+    def frame_loader(path: Path) -> ImageFrame:
+        frame_calls.append(path)
+        return frame
+
+    class FakeDetector:
+        name = "fake"
+
+        def detect_prepared(
+            self,
+            frame_identifier: str,
+            prepared: object,
+        ) -> DetectionCatalog:
+            assert prepared is not None
+            detector_calls.append(("fake", frame_identifier))
+            return DetectionCatalog(frame_identifier, (), self.name)
+
+    def detector_factory(
+        identifier: str,
+        _config: DetectionConfig | None,
+    ) -> FakeDetector:
+        detector_calls.append(("factory", identifier))
+        return FakeDetector()
+
+    session = PortalSession(
+        loader=lambda _path: FakeRawFile(),
+        frame_loader=frame_loader,
+        detector_factory=detector_factory,
+    )
+    session.discover((selected,))
+
+    config = DetectionConfig()
+    first = session.detect(selected, "fake", config)
+    second = session.detect(selected, "fake", config)
+
+    assert first.frame_identifier == str(selected.resolve())
+    assert second.detector_name == "fake"
+    assert session.detection_catalog is second
+    assert session.prepared_image is not None
+    assert session.frame_path == selected.resolve()
+    assert frame_calls == [selected.resolve()]
+    assert detector_calls == [
+        ("factory", "fake"),
+        ("fake", str(selected.resolve())),
+        ("factory", "fake"),
+        ("fake", str(selected.resolve())),
+    ]
+
+
+def test_session_records_separate_detection_timings(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    from gonet_astrometry.detection.config import DetectionConfig
+    from gonet_astrometry.models.detection import Detection, DetectionCatalog
+    from gonet_astrometry.models.frame import (
+        ImageFrame,
+        ImageMetadata,
+        ObserverLocation,
+    )
+
+    selected = tmp_path / "selected.jpg"
+    selected.touch()
+    metadata = ImageMetadata(
+        datetime(2026, 8, 6, tzinfo=timezone.utc),
+        10.0,
+        ObserverLocation(0.0, 0.0),
+    )
+    frame = ImageFrame(np.ones((4, 4)), metadata)
+
+    class FakeDetector:
+        name = "timed-fake"
+
+        def detect_prepared(
+            self,
+            frame_identifier: str,
+            _prepared: object,
+        ) -> DetectionCatalog:
+            detection = Detection(1, 1.0, 1.0, 5.0, 5.0, 0.1, 0.1)
+            return DetectionCatalog(frame_identifier, (detection,), self.name)
+
+    times = iter((10.0, 10.1, 10.15, 10.35, 10.65))
+    session = PortalSession(
+        loader=lambda _path: FakeRawFile(),
+        frame_loader=lambda _path: frame,
+        detector_factory=lambda _identifier, _config: FakeDetector(),
+        clock=lambda: next(times),
+    )
+    session.discover((selected,))
+
+    session.detect(selected, "fake", DetectionConfig())
+    timing = session.detection_timing
+
+    assert timing is not None
+    assert timing.frame_load_seconds == pytest.approx(0.1)
+    assert timing.detector_setup_seconds == pytest.approx(0.05)
+    assert timing.preprocessing_seconds == pytest.approx(0.2)
+    assert timing.backend_seconds == pytest.approx(0.3)
+    assert timing.detector_seconds == pytest.approx(0.5)
+    assert timing.total_seconds == pytest.approx(0.65)
+    assert timing.source_count == 1
+    assert timing.sources_per_second == pytest.approx(10.0 / 3.0)

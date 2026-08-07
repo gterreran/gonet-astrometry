@@ -61,6 +61,17 @@ the camera-generated Unix token in the filename; timezone-naive EXIF datetime
 fields are used only when an offset is available. Filesystem timestamps are
 never used. Latitude and longitude must be present in the parsed image metadata.
 
+The source-detection milestone provides four interchangeable backends: SEP
+extraction (the portal default), ``DAOStarFinder``, Photutils segmentation, and
+a built-in SciPy local-maximum baseline. Every backend receives the same
+full-resolution, Bayer-aware significance image and returns the same
+``DetectionCatalog`` model. A provisional fisheye-footprint mask excludes the
+dark sensor exterior, tiled sigma-clipped statistics model local background and
+noise, and large bright contaminants are masked separately. The portal can
+overlay these masks and full-sensor detections on any compact display channel.
+Each run reports frame-load, backend-setup, shared-preprocessing,
+backend-specific, and total wall-clock durations for direct comparisons.
+
 Run the validation commands documented in
 `docs/source/developer_guide/contributing.rst` before opening a pull request.
 
