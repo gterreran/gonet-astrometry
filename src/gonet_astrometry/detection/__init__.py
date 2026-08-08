@@ -2,6 +2,11 @@
 
 from gonet_astrometry.detection.base import SourceDetector
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.diagnostics import (
+    LocalSourceDiagnostics,
+    enrich_detection_catalog,
+    measure_local_source,
+)
 from gonet_astrometry.detection.errors import (
     DetectionBackendUnavailableError,
     DetectionInputError,
@@ -33,6 +38,7 @@ __all__ = [
     "DetectionBackendUnavailableError",
     "DetectionConfig",
     "DetectionInputError",
+    "LocalSourceDiagnostics",
     "DetectionTiming",
     "DetectorIdentifier",
     "DetectorSpec",
@@ -44,6 +50,8 @@ __all__ = [
     "SourceDetector",
     "create_detector",
     "detector_options",
+    "enrich_detection_catalog",
     "estimate_provisional_field_mask",
+    "measure_local_source",
     "prepare_bayer_detection_image",
 ]

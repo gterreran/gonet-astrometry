@@ -16,6 +16,12 @@ Detector protocol and configuration
 .. automodule:: gonet_astrometry.detection.timing
    :members:
 
+Common detection diagnostics
+----------------------------
+
+.. automodule:: gonet_astrometry.detection.diagnostics
+   :members:
+
 Bayer-aware preprocessing
 -------------------------
 

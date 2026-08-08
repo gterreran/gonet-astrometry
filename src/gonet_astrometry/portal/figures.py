@@ -10,9 +10,22 @@ from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
 from gonet_astrometry.adapters.gonet_wizard import GONetChannel
-from gonet_astrometry.models.detection import DetectionCatalog
+from gonet_astrometry.models.detection import (
+    Detection,
+    DetectionCatalog,
+    DetectionClass,
+)
 
 _MAX_MASK_POINTS = 6000
+
+_DETECTION_STYLES: dict[DetectionClass, tuple[str, str, str]] = {
+    "compact": ("Compact", "#f97316", "circle-open"),
+    "elongated": ("Elongated", "#facc15", "diamond-open"),
+    "extended": ("Extended", "#e879f9", "square-open"),
+    "mask-adjacent": ("Mask-adjacent", "#22d3ee", "x"),
+    "backend-flagged": ("Backend-flagged", "#ef4444", "x"),
+    "unclassified": ("Unclassified", "#d1d5db", "circle-open"),
+}
 
 
 def empty_image_figure(message: str = "Load a GONet image to begin.") -> go.Figure:
@@ -123,32 +136,93 @@ def channel_image_figure(
         )
 
     if detections is not None and detections.detections:
+        _add_detection_overlays(figure, detections)
+    return figure
+
+
+def _add_detection_overlays(
+    figure: go.Figure,
+    catalog: DetectionCatalog,
+) -> None:
+    """Add one diagnostic marker trace for each represented source class."""
+    grouped: dict[DetectionClass, list[Detection]] = {
+        source_class: [] for source_class in _DETECTION_STYLES
+    }
+    for detection in catalog.detections:
+        grouped[detection.diagnostic_class].append(detection)
+
+    for source_class, detections in grouped.items():
+        if not detections:
+            continue
+        label, color, symbol = _DETECTION_STYLES[source_class]
         figure.add_trace(
             go.Scattergl(
-                x=[detection.x / 2.0 for detection in detections.detections],
-                y=[detection.y / 2.0 for detection in detections.detections],
+                x=[detection.x / 2.0 for detection in detections],
+                y=[detection.y / 2.0 for detection in detections],
                 mode="markers",
                 marker={
-                    "symbol": "circle-open",
+                    "symbol": symbol,
                     "size": 10,
-                    "color": "#f97316",
+                    "color": color,
                     "line": {"width": 1.5},
                 },
                 customdata=[
-                    [detection.identifier, detection.signal_to_noise]
-                    for detection in detections.detections
+                    _detection_hover_data(detection) for detection in detections
                 ],
                 hovertemplate=(
                     "source=%{customdata[0]}<br>"
-                    "sensor x=%{x:.2f} × 2<br>"
-                    "sensor y=%{y:.2f} × 2<br>"
-                    "S/N=%{customdata[1]:.2f}<extra></extra>"
+                    "class=%{customdata[1]}<br>"
+                    "sensor x=%{customdata[2]}<br>"
+                    "sensor y=%{customdata[3]}<br>"
+                    "peak=%{customdata[4]} σ<br>"
+                    "flux=%{customdata[5]}<br>"
+                    "area=%{customdata[6]} px<br>"
+                    "axes a/b=%{customdata[7]} / %{customdata[8]} px<br>"
+                    "elongation=%{customdata[9]}<br>"
+                    "ellipticity=%{customdata[10]}<br>"
+                    "orientation=%{customdata[11]}°<br>"
+                    "DAO sharpness=%{customdata[12]}<br>"
+                    "DAO roundness=%{customdata[13]} / %{customdata[14]}<br>"
+                    "backend flags=%{customdata[15]}<br>"
+                    "quality flags=%{customdata[16]}<extra></extra>"
                 ),
-                name="Detections",
-                showlegend=False,
+                name=f"{label} ({len(detections)})",
+                showlegend=True,
             )
         )
-    return figure
+
+
+def _detection_hover_data(detection: Detection) -> list[str]:
+    """Return display-ready hover values for one source candidate."""
+    diagnostics = detection.diagnostics
+    return [
+        str(detection.identifier),
+        detection.diagnostic_class,
+        f"{detection.x:.2f}",
+        f"{detection.y:.2f}",
+        _optional_float(diagnostics.peak_value, 2),
+        f"{detection.flux:.2f}",
+        "n/a" if diagnostics.area_pixels is None else str(diagnostics.area_pixels),
+        _optional_float(diagnostics.semimajor_sigma_px, 2),
+        _optional_float(diagnostics.semiminor_sigma_px, 2),
+        _optional_float(detection.elongation, 2),
+        _optional_float(diagnostics.ellipticity, 3),
+        _optional_float(diagnostics.orientation_deg, 1),
+        _optional_float(diagnostics.sharpness, 3),
+        _optional_float(diagnostics.roundness1, 3),
+        _optional_float(diagnostics.roundness2, 3),
+        (
+            "n/a"
+            if diagnostics.backend_flags is None
+            else str(diagnostics.backend_flags)
+        ),
+        ", ".join(detection.flags) if detection.flags else "none",
+    ]
+
+
+def _optional_float(value: float | None, digits: int) -> str:
+    """Format an optional floating-point diagnostic for hover text."""
+    return "n/a" if value is None else f"{value:.{digits}f}"
 
 
 def _add_mask_boundary(

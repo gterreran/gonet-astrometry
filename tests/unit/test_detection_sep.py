@@ -31,9 +31,14 @@ def test_sep_backend_converts_structured_objects(
         ("a", "f8"),
         ("b", "f8"),
         ("flag", "i4"),
+        ("npix", "i4"),
+        ("theta", "f8"),
     ]
     objects = np.array(
-        [(4.5, 7.5, 20.0, 8.0, 2.0, 1.0, 0), (9.0, 2.0, 5.0, 4.0, 1.0, 1.0, 2)],
+        [
+            (4.5, 7.5, 20.0, 8.0, 2.0, 1.0, 0, 11, 0.5),
+            (9.0, 2.0, 5.0, 4.0, 1.0, 1.0, 2, 5, 0.0),
+        ],
         dtype=dtype,
     )
     captured: dict[str, object] = {}
@@ -53,7 +58,13 @@ def test_sep_backend_converts_structured_objects(
 
     assert len(catalog) == 2
     assert catalog.detections[0].signal_to_noise == 8.0
-    assert catalog.detections[1].flags == ("sep:2",)
+    first = catalog.detections[0]
+    second = catalog.detections[1]
+    assert first.diagnostics.area_pixels == 11
+    assert first.diagnostics.ellipticity == pytest.approx(0.5)
+    assert first.diagnostics.orientation_deg == pytest.approx(28.6479, rel=1e-4)
+    assert second.flags == ("sep:2", "backend-flagged")
+    assert second.diagnostics.backend_flags == 2
     assert captured["deblend_cont"] == 1.0
     assert captured["minarea"] == 7
     assert captured["contiguous"] is True

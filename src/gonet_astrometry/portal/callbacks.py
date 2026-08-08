@@ -247,7 +247,8 @@ def detect_source_view(
     message = (
         f"Detected {len(catalog)} source candidate"
         f"{'s' if len(catalog) != 1 else ''} with {catalog.detector_name}"
-        f"{_detection_timing_status(timing)}."
+        f"{_detection_timing_status(timing)}. "
+        f"{_diagnostic_status(catalog)}"
     )
     logger.info(message)
     if timing is not None:
@@ -264,6 +265,17 @@ def detect_source_view(
             rate_text,
         )
     prepared = session.prepared_image
+    counts = catalog.diagnostic_counts()
+    logger.info(
+        "Detection diagnostics | compact %d | elongated %d | extended %d | "
+        "mask-adjacent %d | backend-flagged %d | unclassified %d",
+        counts["compact"],
+        counts["elongated"],
+        counts["extended"],
+        counts["mask-adjacent"],
+        counts["backend-flagged"],
+        counts["unclassified"],
+    )
     if prepared is not None:
         logger.info(
             "Detection masks | usable field %.1f%% | dynamic bright regions %.2f%%",
@@ -282,6 +294,21 @@ def detect_source_view(
         ),
         message,
     )
+
+
+def _diagnostic_status(catalog: DetectionCatalog) -> str:
+    """Return a concise mutually exclusive diagnostic summary."""
+    counts = catalog.diagnostic_counts()
+    parts = [
+        f"{counts['compact']} compact",
+        f"{counts['elongated']} elongated",
+        f"{counts['extended']} extended",
+        f"{counts['mask-adjacent']} mask-adjacent",
+        f"{counts['backend-flagged']} backend-flagged",
+    ]
+    if counts["unclassified"]:
+        parts.append(f"{counts['unclassified']} unclassified")
+    return "Diagnostics: " + ", ".join(parts) + "."
 
 
 def _detection_timing_status(timing: DetectionTiming | None) -> str:

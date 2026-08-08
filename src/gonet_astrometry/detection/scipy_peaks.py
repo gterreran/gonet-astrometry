@@ -13,6 +13,7 @@ from gonet_astrometry.detection.common import (
     local_source_measurements,
 )
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.diagnostics import enrich_detection_catalog
 from gonet_astrometry.detection.preprocessing import (
     PreparedDetectionImage,
     prepare_bayer_detection_image,
@@ -38,9 +39,10 @@ class ScipyPeakDetector:
         return "scipy-local-max"
 
     def detect(self, frame_identifier: str, frame: ImageFrame) -> DetectionCatalog:
-        """Prepare a native frame and detect local maxima."""
+        """Prepare a native frame, detect local maxima, and add diagnostics."""
         prepared = prepare_bayer_detection_image(frame, self.config)
-        return self.detect_prepared(frame_identifier, prepared)
+        catalog = self.detect_prepared(frame_identifier, prepared)
+        return enrich_detection_catalog(catalog, prepared, self.config)
 
     def detect_prepared(
         self,

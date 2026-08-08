@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from dataclasses import replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,17 +39,7 @@ def finalize_catalog(
         ordered = ordered[: config.max_sources]
 
     renumbered = tuple(
-        Detection(
-            identifier=index,
-            x=detection.x,
-            y=detection.y,
-            flux=detection.flux,
-            signal_to_noise=detection.signal_to_noise,
-            x_uncertainty=detection.x_uncertainty,
-            y_uncertainty=detection.y_uncertainty,
-            elongation=detection.elongation,
-            flags=detection.flags,
-        )
+        replace(detection, identifier=index)
         for index, detection in enumerate(ordered, start=1)
     )
     return DetectionCatalog(
@@ -138,3 +129,23 @@ def row_scalar(
             continue
         return scalar(value, default)
     return default
+
+
+def optional_row_scalar(
+    row: object,
+    names: tuple[str, ...],
+) -> float | None:
+    """Read an optional finite numeric field from a table-like row."""
+    for name in names:
+        try:
+            value = row[name]  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            continue
+        candidate = getattr(value, "value", value)
+        try:
+            result = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(result):
+            return result
+    return None

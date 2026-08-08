@@ -18,6 +18,7 @@ from typing import Any
 from gonet_astrometry.adapters.gonet_wizard import RawGONetFile, load_gonet_image
 from gonet_astrometry.detection.base import SourceDetector
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.diagnostics import enrich_detection_catalog
 from gonet_astrometry.detection.preprocessing import (
     PreparedDetectionImage,
     prepare_bayer_detection_image,
@@ -229,6 +230,7 @@ class PortalSession:
         prepared_ready = self.clock()
         catalog = detector.detect_prepared(str(normalized), prepared)
         detection_finished = self.clock()
+        catalog = enrich_detection_catalog(catalog, prepared, config)
 
         timing = DetectionTiming(
             frame_identifier=str(normalized),

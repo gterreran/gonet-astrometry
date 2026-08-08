@@ -9,6 +9,10 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Common source diagnostics with backend-preserved peak, area, source-shape,
+  orientation, quality-bitmask, sharpness, and roundness measurements; shared
+  local-image fallback measurements; non-destructive diagnostic flags and portal
+  marker classes; detailed hover values; and per-class activity summaries.
 - Mask-aware local Bayer preprocessing with an automatically inferred fisheye
   footprint, tiled sigma-clipped background/noise maps, dynamic bright-region
   masking, and optional portal overlays.

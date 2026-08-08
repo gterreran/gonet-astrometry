@@ -15,16 +15,22 @@ from gonet_astrometry.detection.common import (
     elongation_from_axes,
     empty_catalog,
     finalize_catalog,
+    optional_row_scalar,
     row_scalar,
     scalar,
 )
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.diagnostics import enrich_detection_catalog
 from gonet_astrometry.detection.errors import DetectionBackendUnavailableError
 from gonet_astrometry.detection.preprocessing import (
     PreparedDetectionImage,
     prepare_bayer_detection_image,
 )
-from gonet_astrometry.models.detection import Detection, DetectionCatalog
+from gonet_astrometry.models.detection import (
+    Detection,
+    DetectionCatalog,
+    DetectionDiagnostics,
+)
 from gonet_astrometry.models.frame import ImageFrame
 
 
@@ -40,9 +46,10 @@ class DAOStarFinderDetector:
         return "dao-star-finder"
 
     def detect(self, frame_identifier: str, frame: ImageFrame) -> DetectionCatalog:
-        """Prepare a native frame and run ``DAOStarFinder``."""
+        """Prepare a native frame, run ``DAOStarFinder``, and add diagnostics."""
         prepared = prepare_bayer_detection_image(frame, self.config)
-        return self.detect_prepared(frame_identifier, prepared)
+        catalog = self.detect_prepared(frame_identifier, prepared)
+        return enrich_detection_catalog(catalog, prepared, self.config)
 
     def detect_prepared(
         self,
@@ -76,11 +83,19 @@ class DAOStarFinderDetector:
                 ("peak",),
                 default=self.config.threshold_sigma,
             )
-            roundness = max(
-                abs(row_scalar(row, ("roundness1",), default=0.0)),
-                abs(row_scalar(row, ("roundness2",), default=0.0)),
-            )
+            sharpness = optional_row_scalar(row, ("sharpness",))
+            roundness1 = optional_row_scalar(row, ("roundness1",))
+            roundness2 = optional_row_scalar(row, ("roundness2",))
+            roundness = max(abs(roundness1 or 0.0), abs(roundness2 or 0.0))
             uncertainty = coordinate_uncertainty(self.config.fwhm_px, peak)
+            area = optional_row_scalar(row, ("npix", "area"))
+            diagnostics = DetectionDiagnostics(
+                peak_value=max(peak, 0.0),
+                area_pixels=(int(area) if area is not None and area > 0 else None),
+                sharpness=sharpness,
+                roundness1=roundness1,
+                roundness2=roundness2,
+            )
             detections.append(
                 Detection(
                     identifier=index,
@@ -91,6 +106,7 @@ class DAOStarFinderDetector:
                     x_uncertainty=uncertainty,
                     y_uncertainty=uncertainty,
                     elongation=1.0 + roundness,
+                    diagnostics=diagnostics,
                 )
             )
 
@@ -114,9 +130,10 @@ class PhotutilsSegmentationDetector:
         return "photutils-segmentation"
 
     def detect(self, frame_identifier: str, frame: ImageFrame) -> DetectionCatalog:
-        """Prepare a native frame and run Photutils segmentation."""
+        """Prepare a native frame, run segmentation, and add diagnostics."""
         prepared = prepare_bayer_detection_image(frame, self.config)
-        return self.detect_prepared(frame_identifier, prepared)
+        catalog = self.detect_prepared(frame_identifier, prepared)
+        return enrich_detection_catalog(catalog, prepared, self.config)
 
     def detect_prepared(
         self,
@@ -163,6 +180,8 @@ class PhotutilsSegmentationDetector:
             catalog,
             ("semiminor_sigma", "semiminor_axis"),
         )
+        area_values = _optional_catalog_values(catalog, ("area", "segment_area"))
+        orientation_values = _optional_catalog_values(catalog, ("orientation",))
 
         detections: list[Detection] = []
         for index in range(len(labels)):
@@ -171,7 +190,21 @@ class PhotutilsSegmentationDetector:
             if not np.isfinite(x) or not np.isfinite(y):
                 continue
             peak = max(scalar(peak_values[index]), 0.0)
+            major = scalar(major_values[index], np.nan)
+            minor = scalar(minor_values[index], np.nan)
+            area = _optional_index_scalar(area_values, index)
+            orientation = _optional_angle_degrees(orientation_values, index)
             uncertainty = coordinate_uncertainty(self.config.fwhm_px, peak)
+            diagnostics = DetectionDiagnostics(
+                peak_value=peak,
+                area_pixels=(
+                    int(round(area)) if area is not None and area > 0 else None
+                ),
+                semimajor_sigma_px=major if major > 0 else None,
+                semiminor_sigma_px=minor if minor > 0 else None,
+                orientation_deg=orientation,
+                ellipticity=_ellipticity_from_axes(major, minor),
+            )
             detections.append(
                 Detection(
                     identifier=int(labels[index]),
@@ -181,10 +214,8 @@ class PhotutilsSegmentationDetector:
                     signal_to_noise=peak,
                     x_uncertainty=uncertainty,
                     y_uncertainty=uncertainty,
-                    elongation=elongation_from_axes(
-                        scalar(major_values[index], np.nan),
-                        scalar(minor_values[index], np.nan),
-                    ),
+                    elongation=elongation_from_axes(major, minor),
+                    diagnostics=diagnostics,
                 )
             )
 
@@ -200,7 +231,7 @@ def _supported_keyword(factory: Any, modern: str, legacy: str) -> str:
     """Return the keyword supported by an installed Photutils callable.
 
     Photutils 3 renamed several constructor keywords while retaining the old
-    names temporarily as deprecated aliases.  Inspecting the callable keeps
+    names temporarily as deprecated aliases. Inspecting the callable keeps
     this backend compatible with both pre-3.0 and 3.x releases without
     relying on package-version string parsing.
     """
@@ -252,9 +283,53 @@ def _catalog_values(
     names: tuple[str, ...],
 ) -> NDArray[Any]:
     """Return the first available vector property from a source catalog."""
-    for name in names:
-        if hasattr(catalog, name):
-            return np.atleast_1d(getattr(catalog, name))
+    values = _optional_catalog_values(catalog, names)
+    if values is not None:
+        return values
     raise ValueError(
         "Photutils SourceCatalog does not expose any of: " + ", ".join(names)
     )
+
+
+def _optional_catalog_values(
+    catalog: object,
+    names: tuple[str, ...],
+) -> NDArray[Any] | None:
+    """Return an optional vector property from a source catalog."""
+    for name in names:
+        if hasattr(catalog, name):
+            return np.atleast_1d(getattr(catalog, name))
+    return None
+
+
+def _optional_index_scalar(values: NDArray[Any] | None, index: int) -> float | None:
+    """Return one optional finite catalog scalar."""
+    if values is None or index >= len(values):
+        return None
+    value = scalar(values[index], np.nan)
+    return value if np.isfinite(value) else None
+
+
+def _optional_angle_degrees(
+    values: NDArray[Any] | None,
+    index: int,
+) -> float | None:
+    """Return one optional angular quantity in degrees."""
+    if values is None or index >= len(values):
+        return None
+    value = values[index]
+    to_value = getattr(value, "to_value", None)
+    if callable(to_value):
+        try:
+            result = float(to_value("deg"))
+        except (TypeError, ValueError):
+            return None
+        return result if np.isfinite(result) else None
+    return _optional_index_scalar(values, index)
+
+
+def _ellipticity_from_axes(major: float, minor: float) -> float | None:
+    """Return ``1 - b/a`` for valid source axes."""
+    if not np.isfinite(major) or not np.isfinite(minor) or major <= 0 or minor <= 0:
+        return None
+    return min(1.0, max(0.0, 1.0 - minor / major))

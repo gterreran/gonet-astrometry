@@ -296,7 +296,8 @@ def _sidebar(
                     ),
                     html.Div(
                         "All backends share Bayer-parity normalization and return "
-                        "native full-sensor coordinates.",
+                        "native full-sensor coordinates. Marker shapes and colors "
+                        "show non-destructive diagnostic classes.",
                         style=_help_style(),
                     ),
                 ],

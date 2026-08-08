@@ -90,3 +90,59 @@ def test_channel_image_figure_overlays_mask_boundaries() -> None:
     assert len(figure.data) == 3
     assert figure.data[1].name == "Usable field boundary"
     assert figure.data[2].name == "Bright-region mask"
+
+
+def test_channel_image_figure_groups_diagnostic_classes_and_hover_values() -> None:
+    from gonet_astrometry.models.detection import (
+        Detection,
+        DetectionCatalog,
+        DetectionDiagnostics,
+    )
+
+    compact = Detection(
+        1,
+        10.0,
+        12.0,
+        30.0,
+        9.0,
+        0.1,
+        0.1,
+        elongation=1.2,
+        diagnostics=DetectionDiagnostics(
+            peak_value=9.0,
+            area_pixels=8,
+            ellipticity=0.2,
+        ),
+    )
+    extended = Detection(
+        2,
+        20.0,
+        22.0,
+        80.0,
+        15.0,
+        0.1,
+        0.1,
+        elongation=2.5,
+        flags=("extended", "elongated"),
+        diagnostics=DetectionDiagnostics(
+            peak_value=15.0,
+            area_pixels=45,
+            ellipticity=0.6,
+        ),
+    )
+
+    figure = channel_image_figure(
+        np.ones((20, 30), dtype=np.float64),
+        channel="green1",
+        source_name="frame.jpg",
+        detections=DetectionCatalog("frame", (compact, extended), "test"),
+    )
+
+    assert len(figure.data) == 3
+    assert figure.data[1].name == "Compact (1)"
+    assert figure.data[2].name == "Extended (1)"
+    assert figure.data[1].customdata[0][1] == "compact"
+    assert figure.data[1].customdata[0][4] == "9.00"
+    assert figure.data[2].customdata[0][6] == "45"
+    assert figure.data[2].customdata[0][10] == "0.600"
+    assert figure.data[2].customdata[0][16] == "extended, elongated"

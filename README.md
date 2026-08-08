@@ -70,7 +70,11 @@ dark sensor exterior, tiled sigma-clipped statistics model local background and
 noise, and large bright contaminants are masked separately. The portal can
 overlay these masks and full-sensor detections on any compact display channel.
 Each run reports frame-load, backend-setup, shared-preprocessing,
-backend-specific, and total wall-clock durations for direct comparisons.
+backend-specific, and total wall-clock durations for direct comparisons. A
+common diagnostics pass enriches every candidate with available peak, area,
+shape, orientation, backend-quality, and mask-adjacency measurements. The portal
+uses those values for detailed hover text and non-destructive compact, elongated,
+extended, mask-adjacent, backend-flagged, and unclassified marker groups.
 
 Run the validation commands documented in
 `docs/source/developer_guide/contributing.rst` before opening a pull request.

@@ -176,6 +176,32 @@ visual inspection, the portal divides them by two before drawing markers over
 the selected compact Bayer-channel image. Switching display channels reuses the
 same catalog; selecting a different file invalidates it.
 
+Detection diagnostics
+~~~~~~~~~~~~~~~~~~~~~
+
+After backend extraction, every candidate passes through one common diagnostics
+step on the same prepared significance image. Backend measurements are retained
+when available, while missing peak, area, axis, orientation, elongation, and
+ellipticity values are estimated from a local native-coordinate cutout. SEP also
+retains its integer extraction bitmask, DAOStarFinder retains sharpness and both
+roundness values, and Photutils segmentation retains segment area and source
+axes.
+
+Candidates near the provisional field boundary or a dynamic bright-region mask
+are flagged without being removed. Large footprints, high axis ratios, and
+backend quality flags are likewise descriptive only. Each detection receives one
+mutually exclusive display class: compact, elongated, extended, mask-adjacent,
+backend-flagged, or unclassified. The priority ordering is deliberately
+conservative, so a backend-flagged source is displayed as such even when it is
+also extended or elongated.
+
+The image overlay uses a separate marker style for each represented class and
+shows native coordinates, peak significance, flux, footprint area, elongation,
+ellipticity, and flags in the hover text. The sidebar and activity terminal
+report class counts after every run. These diagnostics do not yet reject or
+filter candidates; they provide the measurements needed to tune later filtering
+and temporal tracking.
+
 Detector timing
 ~~~~~~~~~~~~~~~
 

@@ -46,6 +46,8 @@ def test_daostarfinder_backend_converts_table_rows(
                     "peak": 8.0,
                     "roundness1": 0.2,
                     "roundness2": -0.1,
+                    "sharpness": 0.7,
+                    "npix": 9,
                 },
                 {"xcentroid": np.nan, "ycentroid": 1.0},
             ]
@@ -57,7 +59,13 @@ def test_daostarfinder_backend_converts_table_rows(
 
     assert len(catalog) == 1
     assert catalog.detections[0].x == 4.5
-    assert catalog.detections[0].elongation == pytest.approx(1.2)
+    result = catalog.detections[0]
+    assert result.elongation == pytest.approx(1.2)
+    assert result.diagnostics.peak_value == 8.0
+    assert result.diagnostics.area_pixels == 9
+    assert result.diagnostics.sharpness == 0.7
+    assert result.diagnostics.roundness1 == 0.2
+    assert result.diagnostics.roundness2 == -0.1
     assert captured["threshold"] == 5.0
 
 
@@ -100,6 +108,8 @@ def test_segmentation_backend_converts_source_catalog(
         max_value = np.array([7.0])
         semimajor_axis = np.array([2.0])
         semiminor_axis = np.array([1.0])
+        area = np.array([13.0])
+        orientation = np.array([27.5])
 
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             pass
@@ -114,7 +124,13 @@ def test_segmentation_backend_converts_source_catalog(
 
     assert len(catalog) == 1
     assert catalog.detections[0].x == 6.25
-    assert catalog.detections[0].elongation == 2.0
+    result = catalog.detections[0]
+    assert result.elongation == 2.0
+    assert result.diagnostics.area_pixels == 13
+    assert result.diagnostics.semimajor_sigma_px == 2.0
+    assert result.diagnostics.semiminor_sigma_px == 1.0
+    assert result.diagnostics.ellipticity == 0.5
+    assert result.diagnostics.orientation_deg == 27.5
 
 
 def test_segmentation_backend_handles_no_segments(
