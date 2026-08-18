@@ -11,6 +11,7 @@ from gonet_astrometry.adapters.gonet_wizard import (
     get_raw_channel,
     load_gonet_file_raw,
     load_gonet_image,
+    load_gonet_metadata,
     load_grid_calibration,
     reconstruct_bayer_mosaic,
 )
@@ -166,6 +167,22 @@ def test_load_gonet_image_builds_scientific_frame(monkeypatch) -> None:
     assert calls == [(Path("frame.jpg"), True)]
     assert np.array_equal(GONetImageLoader().load(Path("frame.jpg")).data, frame.data)
 
+
+
+def test_load_gonet_metadata_skips_bayer_reconstruction(monkeypatch) -> None:
+    raw = FakeRawFile()
+    calls: list[tuple[Path, bool]] = []
+
+    def fake_loader(path: Path, *, parse_metadata: bool = False) -> FakeRawFile:
+        calls.append((path, parse_metadata))
+        return raw
+
+    monkeypatch.setattr(gonet_wizard, "load_gonet_file_raw", fake_loader)
+    metadata = load_gonet_metadata(Path("frame.jpg"))
+
+    assert metadata.location.latitude_deg == 41.88
+    assert metadata.source_path == Path("frame.jpg")
+    assert calls == [(Path("frame.jpg"), True)]
 
 def test_grid_adapter_is_explicitly_unimplemented() -> None:
     with pytest.raises(NotImplementedError, match="Grid calibration adapter"):

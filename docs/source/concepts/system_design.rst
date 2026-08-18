@@ -6,9 +6,13 @@ Problem formulation
 
 Stars follow rotations about the celestial pole on the unit celestial sphere.
 A fisheye projection does not generally preserve those trajectories as
-Euclidean circles in raw pixel coordinates. The calibration pipeline therefore
-converts detections from sensor coordinates to camera-frame unit rays before
-fitting temporal motion.
+Euclidean circles in raw pixel coordinates. A conservative image-plane linker
+may bootstrap short source associations before an approximate pixel-to-ray map
+is available. That bootstrap linker uses the actual exposure midpoints for
+motion gates, track lifetime, and extrapolation; it never assumes a uniform
+cadence or a fixed burst pattern. The physical temporal model then converts
+those tracklets to camera-frame unit rays before fitting the common celestial
+rotation.
 
 The eventual joint model will compare an observed pixel with a projected
 catalog direction transformed through:

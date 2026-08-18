@@ -9,6 +9,14 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Portable, provenance-checked ``detections.npz`` and ``tracks.npz`` mid-level
+  products with automatic cache reuse, a single CLI output directory, and an
+  explicit ``--overwrite-products`` escape hatch for forced recomputation.
+- Non-interactive ``run`` CLI workflow with configurable detection and tracking parameters plus a static PDF diagnostic figure.
+- Bootstrap multi-image source tracking with chronological sequence validation,
+  sequential frame processing, cached per-frame detection catalogs, time-scaled
+  association gates, constant-velocity prediction, missing-frame support,
+  non-destructive track diagnostics, and portal track overlays.
 - Common source diagnostics with backend-preserved peak, area, source-shape,
   orientation, quality-bitmask, sharpness, and roundness measurements; shared
   local-image fallback measurements; non-destructive diagnostic flags and portal
@@ -44,6 +52,7 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Fixed
 
+- Preflight multi-image CLI runs by rejecting ``0,0,0`` GPS fixes and retaining the largest location-consistent image group before source detection begins.
 - Prefer the camera-generated Unix timestamp in GONet filenames to
   timezone-naive EXIF datetime fields during scientific frame loading.
 - Corrected the Sphinx version configuration so it always contains text.
@@ -58,3 +67,12 @@ project intends to follow semantic versioning once the public API stabilizes.
   repository-bootstrap helpers, and placeholder tests.
 - Redundant environment, Makefile, pre-commit, and standalone contribution
   files; development instructions now live in the README and Sphinx guide.
+
+### Changed
+
+- Bootstrap tracking now uses elapsed exposure time as the primary gap criterion
+  instead of assuming a fixed number of missing frames.
+- Long-gap prediction tolerances scale conservatively with the actual time
+  extrapolation.
+- CLI tracking reports now include a second temporal-diagnostics page with
+  cadence, track-length, duration, and epoch-coverage distributions.

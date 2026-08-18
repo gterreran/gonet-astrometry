@@ -16,7 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from gonet_astrometry.adapters.gonet_metadata import image_metadata_from_wizard
-from gonet_astrometry.models.frame import ImageFrame
+from gonet_astrometry.models.frame import ImageFrame, ImageMetadata
 from gonet_astrometry.models.grid import GridCalibration
 
 GONetChannel = Literal["blue", "green1", "green2", "red"]
@@ -196,6 +196,19 @@ class GONetImageLoader:
     def load(self, path: Path) -> ImageFrame:
         """Load one native GONet image as an astrometry frame."""
         return load_gonet_image(path)
+
+
+def load_gonet_metadata(path: Path) -> ImageMetadata:
+    """Load only the astrometric metadata needed to preflight an image.
+
+    The Wizard still parses the native file internally, but this helper avoids
+    reconstructing the full Bayer mosaic and avoids all source-detection work.
+    It is intended for inexpensive location and timestamp checks before a long
+    multi-image run.
+    """
+    source_path = Path(path).expanduser()
+    gonet_file = load_gonet_file_raw(source_path, parse_metadata=True)
+    return image_metadata_from_wizard(source_path, gonet_file.meta)
 
 
 def load_gonet_image(path: Path) -> ImageFrame:

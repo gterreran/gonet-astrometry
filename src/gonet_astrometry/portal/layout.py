@@ -15,6 +15,9 @@ from gonet_astrometry.portal.figures import empty_image_figure
 DETECTOR_OPTIONS = detector_options()
 """Registered source-detection choices exposed by the portal."""
 
+DEFAULT_TRACKING_IMAGE_COUNT = 5
+"""Maximum number of discovered images preselected for bootstrap tracking."""
+
 
 def build_layout(
     initial_path: Path | None = None,
@@ -108,6 +111,9 @@ def _sidebar(
 ) -> html.Aside:
     """Build the sidebar containing every interactive control."""
     options = [{"label": str(path), "value": str(path)} for path in discovered_files]
+    tracking_values = [
+        str(path) for path in discovered_files[:DEFAULT_TRACKING_IMAGE_COUNT]
+    ]
     return html.Aside(
         [
             _control_group(
@@ -298,6 +304,114 @@ def _sidebar(
                         "All backends share Bayer-parity normalization and return "
                         "native full-sensor coordinates. Marker shapes and colors "
                         "show non-destructive diagnostic classes.",
+                        style=_help_style(),
+                    ),
+                ],
+            ),
+            _control_group(
+                "Star tracking",
+                [
+                    html.Label(
+                        "Sequence images",
+                        htmlFor=ids.TRACKING_FILES,
+                        style=_label_style(),
+                    ),
+                    dcc.Dropdown(
+                        id=ids.TRACKING_FILES,
+                        options=options,
+                        value=tracking_values,
+                        multi=True,
+                        placeholder="Select at least two discovered images",
+                        style={"fontSize": "0.82rem"},
+                    ),
+                    html.Div(
+                        "Up to the first five discovered images are selected by "
+                        "default to avoid accidentally processing a large folder.",
+                        style=_help_style(),
+                    ),
+                    html.Div(
+                        [
+                            html.Label(
+                                "Maximum motion (sensor px/min)",
+                                htmlFor=ids.TRACK_MAX_SPEED,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.TRACK_MAX_SPEED,
+                                type="number",
+                                min=0.1,
+                                step=1.0,
+                                value=20.0,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                            html.Label(
+                                "Prediction tolerance (sensor px)",
+                                htmlFor=ids.TRACK_PREDICTION_TOLERANCE,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.TRACK_PREDICTION_TOLERANCE,
+                                type="number",
+                                min=0.1,
+                                step=0.5,
+                                value=6.0,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                            html.Label(
+                                "Maximum track gap (minutes)",
+                                htmlFor=ids.TRACK_MAX_GAP,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.TRACK_MAX_GAP,
+                                type="number",
+                                min=0.1,
+                                step=1.0,
+                                value=15.0,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                            html.Label(
+                                "Minimum detections per track",
+                                htmlFor=ids.TRACK_MIN_LENGTH,
+                                style=_label_style(),
+                            ),
+                            dcc.Input(
+                                id=ids.TRACK_MIN_LENGTH,
+                                type="number",
+                                min=2,
+                                step=1,
+                                value=3,
+                                debounce=True,
+                                style={"width": "100%", "boxSizing": "border-box"},
+                            ),
+                        ],
+                        style={
+                            "display": "grid",
+                            "gap": "0.4rem",
+                            "marginTop": "0.65rem",
+                        },
+                    ),
+                    html.Button(
+                        "Build tracks",
+                        id=ids.BUILD_TRACKS,
+                        n_clicks=0,
+                        style=_primary_button_style(),
+                    ),
+                    html.Div(
+                        "Process selected images sequentially and build bootstrap "
+                        "image-plane tracklets.",
+                        id=ids.TRACKING_STATUS,
+                        role="status",
+                        style=_status_style(),
+                    ),
+                    html.Div(
+                        "This first linker uses the actual exposure timestamps for "
+                        "motion, "
+                        "gap handling, and prediction. It seeds, but does not replace, "
+                        "the later spherical rotation-axis solution.",
                         style=_help_style(),
                     ),
                 ],

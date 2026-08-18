@@ -18,5 +18,6 @@ selected.
    concepts/coordinate_systems
    concepts/development_roadmap
    user_guide/portal
+   user_guide/cli_run
    developer_guide/contributing
    api/index

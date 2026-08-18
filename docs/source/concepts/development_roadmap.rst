@@ -30,7 +30,8 @@ Milestone 3: Grid-assisted absolute solution
 Milestone 4: temporal tracking
 ------------------------------
 
-* associate detections across timestamps;
+* bootstrap conservative image-plane tracklets across timestamps;
+* convert associated detections to camera rays;
 * estimate the common celestial rotation axis in ray space;
 * reject static lights, aircraft, clouds, and inconsistent transients;
 * diagnose timestamp and camera-motion errors.

@@ -52,6 +52,7 @@ All interactive controls are grouped in the left sidebar:
 * current-image selection and loading;
 * native Bayer-channel selection and detection-mask overlays;
 * a pluggable star-detection algorithm selector;
+* multi-image bootstrap tracking controls and sequence selection;
 * current-image information; and
 * the desktop Exit action.
 
@@ -216,3 +217,54 @@ candidate count, and candidates per backend second.
 The first invocation of an optional backend can include Python module import
 cost in its setup or backend duration. Repeat runs therefore provide a useful
 warm-cache comparison in addition to the cold-start measurement.
+
+
+Multi-image bootstrap tracking
+------------------------------
+
+The star-tracking controls operate on an explicit subset of the discovered
+images. Up to the first five discovered candidates are preselected so opening a
+large directory cannot accidentally trigger a full-night detection run. The
+selection can be expanded or replaced before tracking. Discovery still stores
+only paths. When tracking is requested, the
+portal loads one scientific frame at a time, preprocesses it, runs the selected
+detector, retains only the lightweight detection catalog and observing metadata,
+and then releases the large frame arrays before advancing to the next file. A
+repeated tracking run with the same image set and detector settings reuses the
+cached catalogs, so association parameters can be tuned without repeating image
+loading and source detection.
+
+Detection epochs are ordered by exposure midpoint rather than filename. The
+sequence requires matching native sensor shape and orientation, strictly unique
+timestamps, and observing positions within the configured GPS tolerance.
+
+The first tracking implementation is deliberately a bootstrap image-plane
+linker. A nascent track uses the elapsed time and ``Maximum motion`` control to
+set a search radius. After two detections have been associated, the next
+position is predicted from the measured image-plane velocity and matched within
+the ``Prediction tolerance``. Tracks may bridge the configured number of
+missing epochs, and only associations reaching ``Minimum detections per track``
+are returned. One detection can participate in at most one track at a given
+epoch.
+
+Returned tracks are not yet identified as stars and are not rejected solely on
+single-image source diagnostics. They receive non-destructive temporal classes:
+
+``candidate``
+    A sufficiently smooth track with measurable image-plane motion.
+
+``low-motion``
+    A smooth track with little end-to-end displacement. Fixed lights naturally
+    fall in this class, but the class is retained because real stars close to
+    the celestial pole may also move slowly.
+
+``poor-fit``
+    A track whose points have a large RMS residual around a local quadratic
+    image-plane path.
+
+The image viewer draws complete track histories over the currently displayed
+compact Bayer channel and reports track identifier, frame, timestamp, mean
+speed, and fit RMS on hover. These tracklets are seeds for the next, physically
+stronger stage: converting detections to camera rays and fitting the common
+celestial rotation axis. The image-plane linker is therefore intentionally
+conservative and should not be interpreted as an astrometric solution.

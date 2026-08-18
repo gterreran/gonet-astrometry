@@ -11,6 +11,8 @@ The package-level modules are grouped below by responsibility.
    io
    adapters
    detection
+   tracking
+   products
    catalogs
    pipeline
    portal

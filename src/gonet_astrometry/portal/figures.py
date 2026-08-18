@@ -15,6 +15,8 @@ from gonet_astrometry.models.detection import (
     DetectionCatalog,
     DetectionClass,
 )
+from gonet_astrometry.models.track import StarTrack, TrackClass
+from gonet_astrometry.tracking.image_plane import ImagePlaneTrackingResult
 
 _MAX_MASK_POINTS = 6000
 
@@ -25,6 +27,11 @@ _DETECTION_STYLES: dict[DetectionClass, tuple[str, str, str]] = {
     "mask-adjacent": ("Mask-adjacent", "#22d3ee", "x"),
     "backend-flagged": ("Backend-flagged", "#ef4444", "x"),
     "unclassified": ("Unclassified", "#d1d5db", "circle-open"),
+}
+_TRACK_STYLES: dict[TrackClass, tuple[str, str, str]] = {
+    "candidate": ("Candidate tracks", "#34d399", "circle"),
+    "low-motion": ("Low-motion tracks", "#94a3b8", "diamond"),
+    "poor-fit": ("Poor-fit tracks", "#fb7185", "x"),
 }
 
 
@@ -69,6 +76,7 @@ def channel_image_figure(
     detections: DetectionCatalog | None = None,
     field_mask: NDArray[np.bool_] | None = None,
     dynamic_mask: NDArray[np.bool_] | None = None,
+    tracking_result: ImagePlaneTrackingResult | None = None,
 ) -> go.Figure:
     """Create an interactive grayscale figure for one native GONet channel.
 
@@ -89,6 +97,8 @@ def channel_image_figure(
         Optional full-sensor mask with ``True`` inside the usable field.
     dynamic_mask
         Optional full-sensor mask with ``True`` for bright contaminants.
+    tracking_result
+        Optional multi-image tracklets drawn in compact display coordinates.
 
     Returns
     -------
@@ -137,6 +147,8 @@ def channel_image_figure(
 
     if detections is not None and detections.detections:
         _add_detection_overlays(figure, detections)
+    if tracking_result is not None and tracking_result.tracks:
+        _add_track_overlays(figure, tracking_result)
     return figure
 
 
@@ -187,6 +199,75 @@ def _add_detection_overlays(
                     "quality flags=%{customdata[16]}<extra></extra>"
                 ),
                 name=f"{label} ({len(detections)})",
+                showlegend=True,
+            )
+        )
+
+
+def _add_track_overlays(
+    figure: go.Figure,
+    result: ImagePlaneTrackingResult,
+) -> None:
+    """Draw grouped image-plane track histories over the current channel view."""
+    grouped: dict[TrackClass, list[StarTrack]] = {
+        track_class: [] for track_class in _TRACK_STYLES
+    }
+    for track in result.tracks:
+        grouped[track.diagnostic_class].append(track)
+
+    for track_class, tracks in grouped.items():
+        if not tracks:
+            continue
+        label, color, symbol = _TRACK_STYLES[track_class]
+        xs: list[float | None] = []
+        ys: list[float | None] = []
+        customdata: list[list[str] | None] = []
+        for track in tracks:
+            diagnostics = track.diagnostics
+            speed = (
+                "n/a"
+                if diagnostics is None
+                else f"{diagnostics.mean_speed_px_per_minute:.2f}"
+            )
+            rms = "n/a" if diagnostics is None else f"{diagnostics.fit_rms_px:.2f}"
+            for point in result.resolve(track):
+                xs.append(point.detection.x / 2.0)
+                ys.append(point.detection.y / 2.0)
+                customdata.append(
+                    [
+                        str(track.identifier),
+                        track.diagnostic_class,
+                        point.epoch.source_path.name,
+                        point.epoch.exposure_midpoint.isoformat(),
+                        f"{point.detection.x:.2f}",
+                        f"{point.detection.y:.2f}",
+                        speed,
+                        rms,
+                    ]
+                )
+            xs.append(None)
+            ys.append(None)
+            customdata.append(None)
+
+        figure.add_trace(
+            go.Scattergl(
+                x=xs,
+                y=ys,
+                mode="lines+markers",
+                line={"width": 1.5, "color": color},
+                marker={"size": 6, "color": color, "symbol": symbol},
+                customdata=customdata,
+                hovertemplate=(
+                    "track=%{customdata[0]}<br>"
+                    "class=%{customdata[1]}<br>"
+                    "frame=%{customdata[2]}<br>"
+                    "midpoint=%{customdata[3]}<br>"
+                    "sensor x=%{customdata[4]}<br>"
+                    "sensor y=%{customdata[5]}<br>"
+                    "mean speed=%{customdata[6]} px/min<br>"
+                    "fit RMS=%{customdata[7]} px<extra></extra>"
+                ),
+                name=f"{label} ({len(tracks)})",
                 showlegend=True,
             )
         )

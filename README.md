@@ -21,10 +21,11 @@ multi-frame star tracking and a joint camera/astrometric solution.
 
 ## Design principle
 
-The package treats stellar motion as a rotation on the unit sphere. Pixel
-coordinates are converted to camera-frame rays before temporal fitting, so the
-method does not assume that stellar tracks are Euclidean circles in a distorted
-fisheye image.
+The final physical model treats stellar motion as a rotation on the unit sphere.
+A conservative image-plane linker may be used to bootstrap source associations,
+but those tracklets are converted to camera-frame rays before the celestial
+rotation model is fitted. The astrometric solution therefore does not assume
+that stellar tracks are Euclidean circles in a distorted fisheye image.
 
 ## Development setup
 
@@ -75,6 +76,45 @@ common diagnostics pass enriches every candidate with available peak, area,
 shape, orientation, backend-quality, and mask-adjacency measurements. The portal
 uses those values for detailed hover text and non-destructive compact, elongated,
 extended, mask-adjacent, backend-flagged, and unclassified marker groups.
+
+The first temporal-tracking stage can process any selected subset of discovered
+images without keeping the full image sequence in memory. Frames are loaded and
+detected sequentially, while only source catalogs and observing metadata are
+retained. Bootstrap tracklets use the actual exposure midpoints for displacement gates,
+track lifetime, and constant-velocity image-plane prediction. The primary gap
+limit is expressed in elapsed minutes rather than image count, so short bursts,
+multi-minute cadence gaps, and occasional missing exposures do not require a
+uniform sampling assumption. Tracklets remain labelled as candidate,
+low-motion, or poor-fit rather than being aggressively rejected. Complete track
+histories can be inspected over the current image. This image-plane association
+is a seed for the later spherical common-rotation-axis solution, not the final
+astrometric model.
+
+For faster detector and tracking experiments, ``gonet-astrometry run`` accepts
+multiple files and/or folders, requires an explicit ``--algorithm``, exposes
+every current detection and bootstrap-tracking parameter, and writes a two-page
+PDF diagnostic. The first page contains the effective field of view,
+reference-image detections, and calculated track histories; the second reports
+cadence and track-fragmentation distributions. Before the expensive detection
+pass starts, the runner inspects observing metadata, skips explicit ``0,0,0``
+GPS failures, groups the remaining images by the configured location tolerance,
+and retains the largest coherent observing-site group. Files with malformed
+metadata or GPS locations outside that dominant group are reported and skipped.
+
+The runner also persists portable ``detections.npz`` and ``tracks.npz``
+mid-level products in one output directory. Compatible products are reused on
+subsequent runs, so a 700-image sequence does not need to be extracted again
+when only the later tracking or astrometric-calibration stage changes. Product
+provenance includes source-file stat fingerprints and the relevant algorithm
+and configuration values; incompatible products are recomputed automatically.
+Use ``--overwrite-products`` to force a fresh detection and tracking pass. For
+example:
+
+```bash
+gonet-astrometry run /path/to/night \
+    --algorithm sep \
+    --output-dir gonet_astrometry_output
+```
 
 Run the validation commands documented in
 `docs/source/developer_guide/contributing.rst` before opening a pull request.

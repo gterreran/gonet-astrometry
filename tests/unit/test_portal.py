@@ -17,6 +17,7 @@ from gonet_astrometry.portal.callbacks import (
     detect_source_view,
     discover_source_paths,
     load_channel_view,
+    track_sequence_view,
 )
 from gonet_astrometry.portal.layout import build_layout
 from gonet_astrometry.portal.session import PortalSession
@@ -90,7 +91,13 @@ def test_discover_source_paths_registers_candidates_lazily(tmp_path: Path) -> No
         return FakeRawFile()
 
     session = PortalSession(loader=loader)
-    options, selected, status = discover_source_paths(
+    (
+        options,
+        selected,
+        tracking_options,
+        tracking_values,
+        status,
+    ) = discover_source_paths(
         str(tmp_path),
         ["recursive"],
         session=session,
@@ -98,6 +105,8 @@ def test_discover_source_paths_registers_candidates_lazily(tmp_path: Path) -> No
 
     assert [option["value"] for option in options] == [str(first), str(second)]
     assert selected == str(first)
+    assert tracking_options == options
+    assert tracking_values == [str(first), str(second)]
     assert "2 candidate GONet files" in status
     assert calls == []
 
@@ -211,7 +220,7 @@ def test_layout_and_app_include_sidebar_controls(tmp_path: Path) -> None:
 
     assert isinstance(layout, html.Div)
     assert app.title == "GONet Astrometry Calibrator"
-    assert len(app.callback_map) >= 5
+    assert len(app.callback_map) >= 6
     assert f"{ids.LOG_WINDOW}.children" in app.callback_map
     assert f"{ids.BTN_EXIT}.disabled" in app.callback_map
     assert {
@@ -224,6 +233,12 @@ def test_layout_and_app_include_sidebar_controls(tmp_path: Path) -> None:
         ids.DETECTION_FWHM,
         ids.DETECTION_MIN_PIXELS,
         ids.DETECT_SOURCES,
+        ids.TRACKING_FILES,
+        ids.TRACK_MAX_SPEED,
+        ids.TRACK_PREDICTION_TOLERANCE,
+        ids.TRACK_MAX_GAP,
+        ids.TRACK_MIN_LENGTH,
+        ids.BUILD_TRACKS,
         ids.SHOW_DETECTION_MASKS,
         ids.LOAD_IMAGE,
         ids.BTN_EXIT,
@@ -265,14 +280,23 @@ def test_registered_callbacks_delegate_to_session(tmp_path: Path) -> None:
         if f"{ids.FILE_SELECT}.options" in key
     )
     discovery_callback = discovery_entry["callback"].__wrapped__
-    options, selected, discovery_status = discovery_callback(
+    (
+        options,
+        selected,
+        tracking_options,
+        tracking_values,
+        discovery_status,
+    ) = discovery_callback(
         1,
         str(tmp_path),
         ["recursive"],
         str(image.resolve()),
+        [str(image.resolve())],
     )
     assert selected == str(image.resolve())
     assert options[0]["value"] == str(image.resolve())
+    assert tracking_options == options
+    assert tracking_values == [str(image.resolve())]
     assert "candidate GONet file" in discovery_status
 
     detection_entry = next(
@@ -293,3 +317,50 @@ def test_registered_callbacks_delegate_to_session(tmp_path: Path) -> None:
     )
     assert len(detection_figure.data) == 2
     assert "Detected 1 source candidate" in detection_status
+
+
+def test_track_sequence_view_builds_bootstrap_tracks(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    files = tuple(tmp_path / f"frame-{index}.jpg" for index in range(3))
+    for path in files:
+        path.touch()
+
+    base_time = datetime(2026, 8, 6, tzinfo=timezone.utc)
+
+    def sequence_frame_loader(path: Path) -> ImageFrame:
+        index = int(path.stem.split("-")[-1])
+        metadata = ImageMetadata(
+            base_time + timedelta(minutes=index),
+            10.0,
+            ObserverLocation(0.0, 0.0),
+            source_path=path,
+        )
+        return ImageFrame(np.ones((8, 12), dtype=np.float64), metadata)
+
+    session = PortalSession(
+        loader=_raw_loader,
+        frame_loader=sequence_frame_loader,
+        detector_factory=_detector_factory,
+    )
+    session.discover(files)
+
+    figure, status = track_sequence_view(
+        [str(path) for path in files],
+        str(files[0]),
+        "green1",
+        "fake",
+        5.0,
+        3.0,
+        5,
+        20.0,
+        6.0,
+        1,
+        3,
+        session=session,
+    )
+
+    assert "Built 1 tracklets" in status
+    assert session.tracking_result is not None
+    assert len(figure.data) >= 3
+    assert any("Low-motion tracks" in str(trace.name) for trace in figure.data)

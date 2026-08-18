@@ -38,3 +38,6 @@ __MACOSX/
 *.dump
 local-data/
 artifacts/
+
+# Runtime outputs
+/gonet_astrometry_output/

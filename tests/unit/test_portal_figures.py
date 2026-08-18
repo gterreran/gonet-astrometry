@@ -146,3 +146,55 @@ def test_channel_image_figure_groups_diagnostic_classes_and_hover_values() -> No
     assert figure.data[2].customdata[0][6] == "45"
     assert figure.data[2].customdata[0][10] == "0.600"
     assert figure.data[2].customdata[0][16] == "extended, elongated"
+
+
+def test_channel_image_figure_overlays_image_plane_tracks() -> None:
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    from gonet_astrometry.models.detection import Detection, DetectionCatalog
+    from gonet_astrometry.models.frame import ObserverLocation
+    from gonet_astrometry.tracking.config import TrackingConfig
+    from gonet_astrometry.tracking.image_plane import ImagePlaneTracker
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    location = ObserverLocation(41.0, -87.0, 180.0)
+    start = datetime(2026, 8, 8, tzinfo=timezone.utc)
+    epochs = []
+    for index, x in enumerate((10.0, 14.0, 18.0)):
+        frame_id = f"frame-{index}.jpg"
+        catalog = DetectionCatalog(
+            frame_id,
+            (Detection(0, x, 20.0, 10.0, 8.0, 0.1, 0.1),),
+            "synthetic",
+        )
+        epochs.append(
+            DetectionEpoch(
+                frame_identifier=frame_id,
+                source_path=Path(frame_id),
+                exposure_midpoint=start + timedelta(minutes=index),
+                location=location,
+                image_shape=(40, 60),
+                sensor_orientation="native",
+                catalog=catalog,
+            )
+        )
+    result = ImagePlaneTracker(
+        TrackingConfig(
+            max_speed_px_per_minute=10.0,
+            prediction_tolerance_px=2.0,
+            min_track_length=3,
+        )
+    ).track(DetectionSequence.from_epochs(epochs))
+
+    figure = channel_image_figure(
+        np.ones((20, 30), dtype=np.float64),
+        channel="green1",
+        source_name="frame-0.jpg",
+        tracking_result=result,
+    )
+
+    assert len(figure.data) == 2
+    assert figure.data[1].name == "Candidate tracks (1)"
+    assert tuple(figure.data[1].x[:3]) == (5.0, 7.0, 9.0)
+    assert figure.data[1].customdata[0][0] == "0"
