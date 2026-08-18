@@ -107,13 +107,21 @@ subsequent runs, so a 700-image sequence does not need to be extracted again
 when only the later tracking or astrometric-calibration stage changes. Product
 provenance includes source-file stat fingerprints and the relevant algorithm
 and configuration values; incompatible products are recomputed automatically.
-Use ``--overwrite-products`` to force a fresh detection and tracking pass. For
-example:
+Use ``--overwrite-products`` to force a fresh detection and tracking pass.
+
+When a portable Grid Calibration ``*_calibration.npz`` is supplied, the runner
+also converts tracked full-sensor pixels into Grid-frame unit rays and fits one
+robust common apparent-sky rotation axis at the fixed sidereal rate. The result
+is cached independently as ``sidereal_rotation.npz`` and can be recomputed with
+``--overwrite-solution`` without touching cached detections or tracks. The PDF
+then gains a third page showing spherical residuals and accepted/rejected
+tracklets. For example:
 
 ```bash
 gonet-astrometry run /path/to/night \
     --algorithm sep \
-    --output-dir gonet_astrometry_output
+    --output-dir gonet_astrometry_output \
+    --grid-calibration /path/to/camera_calibration.npz
 ```
 
 Run the validation commands documented in

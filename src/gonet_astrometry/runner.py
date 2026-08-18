@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
+from gonet_astrometry.adapters.grid_calibration import load_grid_calibration
 from gonet_astrometry.adapters.gonet_wizard import (
     GONetChannel,
     get_raw_channel,
@@ -32,17 +33,27 @@ from gonet_astrometry.diagnostics.report import write_tracking_report_pdf
 from gonet_astrometry.io.discovery import discover_gonet_files
 from gonet_astrometry.models.detection import DetectionCatalog
 from gonet_astrometry.models.frame import ImageFrame, ImageMetadata
+from gonet_astrometry.models.grid import GridCalibration
 from gonet_astrometry.products import (
     DetectionProduct,
     ProductError,
     ProductStore,
+    SiderealProduct,
     TrackingProduct,
     detection_product_id,
     load_detection_product,
+    load_sidereal_product,
     load_tracking_product,
     save_detection_product,
+    save_sidereal_product,
     save_tracking_product,
+    sidereal_product_id,
     tracking_product_id,
+)
+from gonet_astrometry.solving.sidereal import (
+    SiderealAxisFitter,
+    SiderealFitConfig,
+    SiderealRotationSolution,
 )
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.location_filter import (
@@ -129,6 +140,9 @@ class TrackingRunArtifacts:
     reference_path: Path
     reference_catalog: DetectionCatalog
     reference_prepared: PreparedDetectionImage
+    grid_calibration: GridCalibration | None = None
+    sidereal_solution: SiderealRotationSolution | None = None
+    sidereal_fit_config: SiderealFitConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,8 +161,10 @@ class RunSummary:
     metadata_error_count: int = 0
     detection_product_path: Path | None = None
     tracking_product_path: Path | None = None
+    sidereal_product_path: Path | None = None
     reused_detection_product: bool = False
     reused_tracking_product: bool = False
+    reused_sidereal_product: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,6 +430,9 @@ def run_cli_workflow(
     output_path: Path,
     output_dir: Path | None = None,
     overwrite_products: bool = False,
+    grid_calibration_path: Path | None = None,
+    sidereal_config: SiderealFitConfig | None = None,
+    overwrite_solution: bool = False,
     metadata_loader: MetadataLoader = load_gonet_metadata,
 ) -> RunSummary:
     """Discover inputs, reuse compatible products, and write the PDF report.
@@ -572,6 +591,79 @@ def run_cli_workflow(
             len(tracking_result.tracks),
         )
 
+    grid_calibration: GridCalibration | None = None
+    sidereal_solution: SiderealRotationSolution | None = None
+    sidereal_fit_config: SiderealFitConfig | None = None
+    sidereal_product_path: Path | None = None
+    reused_sidereal = False
+    if grid_calibration_path is not None:
+        sidereal_fit_config = sidereal_config or SiderealFitConfig()
+        grid_path = Path(grid_calibration_path).expanduser().resolve()
+        grid_calibration = load_grid_calibration(grid_path)
+        expected_sidereal_id = sidereal_product_id(
+            tracking_product.product_id,
+            grid_path,
+            sidereal_fit_config,
+        )
+        sidereal_product: SiderealProduct | None = None
+        if (
+            reused_tracking
+            and store.sidereal_path.exists()
+            and not overwrite_products
+            and not overwrite_solution
+        ):
+            try:
+                sidereal_product = load_sidereal_product(
+                    store.sidereal_path,
+                    expected_product_id=expected_sidereal_id,
+                    expected_tracking_product_id=tracking_product.product_id,
+                )
+                reused_sidereal = True
+                logger.info(
+                    "Reusing sidereal product %s | axis r=%.4f deg theta=%.4f deg | "
+                    "fit RMS %.4f deg",
+                    store.sidereal_path,
+                    sidereal_product.solution.axis_r_deg,
+                    sidereal_product.solution.axis_theta_deg,
+                    sidereal_product.solution.fit_rms_deg,
+                )
+            except ProductError as exc:
+                logger.warning(
+                    "Ignoring incompatible sidereal product %s: %s",
+                    store.sidereal_path,
+                    exc,
+                )
+        if sidereal_product is None:
+            sidereal_solution = SiderealAxisFitter(sidereal_fit_config).fit(
+                tracking_product.result,
+                grid_calibration,
+            )
+            sidereal_product = SiderealProduct(
+                product_id=expected_sidereal_id,
+                tracking_product_id=tracking_product.product_id,
+                grid_calibration_path=grid_path,
+                fit_config=sidereal_fit_config,
+                solution=sidereal_solution,
+            )
+            written_sidereal = save_sidereal_product(
+                store.sidereal_path, sidereal_product
+            )
+            counts = sidereal_solution.diagnostic_counts()
+            logger.info(
+                "Wrote sidereal product %s | axis r=%.4f deg theta=%.4f deg | "
+                "fit RMS %.4f deg | %d consistent | %d rejected | %d insufficient",
+                written_sidereal,
+                sidereal_solution.axis_r_deg,
+                sidereal_solution.axis_theta_deg,
+                sidereal_solution.fit_rms_deg,
+                counts["sidereal-consistent"],
+                counts["sidereal-rejected"],
+                counts["insufficient"],
+            )
+        else:
+            sidereal_solution = sidereal_product.solution
+        sidereal_product_path = store.sidereal_path.resolve()
+
     artifacts = TrackingRunArtifacts(
         files=tuple(epoch.source_path for epoch in detection_product.sequence.epochs),
         algorithm=algorithm,
@@ -580,6 +672,9 @@ def run_cli_workflow(
         reference_path=detection_product.reference_path,
         reference_catalog=reference_catalog,
         reference_prepared=reference_prepared,
+        grid_calibration=grid_calibration,
+        sidereal_solution=sidereal_solution,
+        sidereal_fit_config=sidereal_fit_config,
     )
     raw = load_gonet_file_raw(artifacts.reference_path, parse_metadata=False)
     display_data = get_raw_channel(raw, channel)
@@ -605,6 +700,8 @@ def run_cli_workflow(
         metadata_error_count=len(detection_product.metadata_errors),
         detection_product_path=store.detections_path.resolve(),
         tracking_product_path=store.tracks_path.resolve(),
+        sidereal_product_path=sidereal_product_path,
         reused_detection_product=reused_detection,
         reused_tracking_product=reused_tracking,
+        reused_sidereal_product=reused_sidereal,
     )

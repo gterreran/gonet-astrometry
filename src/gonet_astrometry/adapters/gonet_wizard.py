@@ -17,7 +17,6 @@ from numpy.typing import NDArray
 
 from gonet_astrometry.adapters.gonet_metadata import image_metadata_from_wizard
 from gonet_astrometry.models.frame import ImageFrame, ImageMetadata
-from gonet_astrometry.models.grid import GridCalibration
 
 GONetChannel = Literal["blue", "green1", "green2", "red"]
 """Name of one native channel preserved by ``GONetFileRaw``."""
@@ -238,24 +237,3 @@ def load_gonet_image(path: Path) -> ImageFrame:
         data=reconstruct_bayer_mosaic(gonet_file),
         metadata=metadata,
     )
-
-
-def load_grid_calibration(path: Path) -> GridCalibration:
-    """Load Grid calibration output through the future Wizard adapter.
-
-    Parameters
-    ----------
-    path
-        Path to serialized Grid calibration output.
-
-    Returns
-    -------
-    GridCalibration
-        Grid calibration normalized to the package's pixel-to-ray protocol.
-
-    Raises
-    ------
-    NotImplementedError
-        Until the Grid calibration serialization contract has been inspected.
-    """
-    raise NotImplementedError("Grid calibration adapter is not implemented")

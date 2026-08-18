@@ -89,3 +89,79 @@ def test_write_tracking_report_pdf_creates_pdf(tmp_path: Path) -> None:
 
     assert output == (tmp_path / "nested" / "report.pdf").resolve()
     assert output.read_bytes().startswith(b"%PDF")
+
+
+def test_write_tracking_report_pdf_adds_sidereal_page(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from gonet_astrometry.adapters.grid_calibration import PortableGridTransform
+    from gonet_astrometry.models.grid import GridCalibration
+    from gonet_astrometry.solving.sidereal import (
+        SiderealFitConfig,
+        SiderealRotationSolution,
+        SiderealTrackDiagnostics,
+    )
+
+    class Evaluator:
+        sensor_width_px = 20
+        sensor_height_px = 20
+        image_coordinate_convention = (
+            "x=column,y=row;origin=upper-left;+x=right;+y=down;"
+            "pixel-centers-at-integer-coordinates"
+        )
+        calibrated_angular_range_deg = (0.0, 170.0)
+
+        def pixel_to_angle(self, x, y, **kwargs):
+            del kwargs
+            return np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+
+        def angle_to_pixel(self, r_deg, theta_deg):
+            return np.asarray(r_deg, dtype=float), np.asarray(theta_deg, dtype=float)
+
+    artifacts = _artifacts(tmp_path)
+    track = artifacts.tracking_result.tracks[0]
+    solution = SiderealRotationSolution(
+        axis_grid=np.asarray([0.0, 0.6, 0.8]),
+        fit_rms_deg=0.02,
+        fit_median_deg=0.01,
+        fit_p95_deg=0.04,
+        fitted_track_count=1,
+        fitted_point_count=3,
+        track_diagnostics=(
+            SiderealTrackDiagnostics(
+                track_identifier=track.identifier,
+                diagnostic_class="sidereal-consistent",
+                total_point_count=3,
+                valid_point_count=3,
+                duration_s=120.0,
+                angular_span_deg=1.0,
+                rms_residual_deg=0.02,
+                median_residual_deg=0.01,
+                max_residual_deg=0.04,
+            ),
+        ),
+    )
+    calibration = GridCalibration(
+        transform=PortableGridTransform(Evaluator()),
+        image_shape=(20, 20),
+        coordinate_convention=Evaluator.image_coordinate_convention,
+    )
+    artifacts = replace(
+        artifacts,
+        grid_calibration=calibration,
+        sidereal_solution=solution,
+        sidereal_fit_config=SiderealFitConfig(
+            min_track_duration_minutes=1.0,
+        ),
+    )
+
+    output = write_tracking_report_pdf(
+        tmp_path / "sidereal.pdf",
+        image_data=np.arange(100, dtype=float).reshape(10, 10),
+        channel="green1",
+        artifacts=artifacts,
+        detection_config=DetectionConfig(),
+        tracking_config=TrackingConfig(min_track_length=3),
+    )
+
+    assert output.read_bytes().startswith(b"%PDF")

@@ -133,6 +133,13 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "--output",
             "result.pdf",
             "--overwrite-products",
+            "--grid-calibration",
+            "camera_calibration.npz",
+            "--overwrite-solution",
+            "--sidereal-min-track-points",
+            "7",
+            "--sidereal-consistent-rms-deg",
+            "0.2",
         ]
     )
 
@@ -152,6 +159,10 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.output == Path("result.pdf")
     assert arguments.output_dir == Path("products")
     assert arguments.overwrite_products is True
+    assert arguments.grid_calibration == Path("camera_calibration.npz")
+    assert arguments.overwrite_solution is True
+    assert arguments.sidereal_min_track_points == 7
+    assert arguments.sidereal_consistent_rms_deg == 0.2
 
 
 def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
@@ -172,6 +183,8 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
             skipped_file_count=2,
             reused_detection_product=False,
             reused_tracking_product=False,
+            sidereal_product_path=None,
+            reused_sidereal_product=False,
         )
 
     module.run_cli_workflow = fake_run_cli_workflow  # type: ignore[attr-defined]
@@ -198,4 +211,7 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["output_dir"] == Path("gonet_astrometry_output")
     assert calls[0]["output_path"] == Path("gonet_astrometry_output/tracking.pdf")
     assert calls[0]["overwrite_products"] is False
+    assert calls[0]["grid_calibration_path"] is None
+    assert calls[0]["overwrite_solution"] is False
+    assert calls[0]["sidereal_config"].min_track_points == 5
     assert "300 detections" in capsys.readouterr().out

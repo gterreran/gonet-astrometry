@@ -11,10 +11,12 @@ from gonet_astrometry import __version__
 from gonet_astrometry.adapters.gonet_wizard import GONET_CHANNELS
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.registry import DETECTOR_SPECS
+from gonet_astrometry.solving.sidereal import SiderealFitConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 
 _DETECTION_DEFAULTS = DetectionConfig()
 _TRACKING_DEFAULTS = TrackingConfig()
+_SIDEREAL_DEFAULTS = SiderealFitConfig()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -100,10 +102,31 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--overwrite-products",
         action="store_true",
-        help="Recompute detections and tracks even when compatible products exist.",
+        help=(
+            "Recompute detections, tracks, and downstream products even when "
+            "compatible products exist."
+        ),
+    )
+    run.add_argument(
+        "--grid-calibration",
+        type=Path,
+        default=None,
+        help=(
+            "Portable Grid Calibration *_calibration.npz artifact. When supplied, "
+            "fit a common fixed-rate sidereal rotation axis after tracking."
+        ),
+    )
+    run.add_argument(
+        "--overwrite-solution",
+        action="store_true",
+        help=(
+            "Recompute only the Grid-calibrated sidereal solution while retaining "
+            "compatible detection and tracking products."
+        ),
     )
     _add_detection_arguments(run)
     _add_tracking_arguments(run)
+    _add_sidereal_arguments(run)
     return parser
 
 
@@ -258,6 +281,64 @@ def _add_tracking_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+
+def _add_sidereal_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add shared sidereal-axis fitting parameters to ``parser``."""
+    parser.add_argument(
+        "--sidereal-min-track-points",
+        type=int,
+        default=_SIDEREAL_DEFAULTS.min_track_points,
+    )
+    parser.add_argument(
+        "--sidereal-min-duration-minutes",
+        type=float,
+        default=_SIDEREAL_DEFAULTS.min_track_duration_minutes,
+    )
+    parser.add_argument(
+        "--sidereal-min-span-deg",
+        type=float,
+        default=_SIDEREAL_DEFAULTS.min_track_span_deg,
+    )
+    parser.add_argument(
+        "--sidereal-robust-scale-deg",
+        type=float,
+        default=_SIDEREAL_DEFAULTS.robust_scale_deg,
+    )
+    parser.add_argument(
+        "--sidereal-consistent-rms-deg",
+        type=float,
+        default=_SIDEREAL_DEFAULTS.consistent_rms_deg,
+    )
+    parser.add_argument(
+        "--sidereal-max-fit-tracks",
+        type=int,
+        default=_SIDEREAL_DEFAULTS.max_fit_tracks,
+    )
+    parser.add_argument(
+        "--sidereal-max-points-per-track",
+        type=int,
+        default=_SIDEREAL_DEFAULTS.max_fit_points_per_track,
+    )
+    parser.add_argument(
+        "--sidereal-inverse-tolerance-px",
+        type=float,
+        default=_SIDEREAL_DEFAULTS.inverse_reprojection_tolerance_px,
+    )
+
+
+def _sidereal_config(arguments: argparse.Namespace) -> SiderealFitConfig:
+    """Construct sidereal-fit settings from parsed ``run`` arguments."""
+    return SiderealFitConfig(
+        min_track_points=arguments.sidereal_min_track_points,
+        min_track_duration_minutes=arguments.sidereal_min_duration_minutes,
+        min_track_span_deg=arguments.sidereal_min_span_deg,
+        robust_scale_deg=arguments.sidereal_robust_scale_deg,
+        consistent_rms_deg=arguments.sidereal_consistent_rms_deg,
+        max_fit_tracks=arguments.sidereal_max_fit_tracks,
+        max_fit_points_per_track=arguments.sidereal_max_points_per_track,
+        inverse_reprojection_tolerance_px=arguments.sidereal_inverse_tolerance_px,
+    )
+
 def _optional_nonnegative_int(value: str) -> int | None:
     """Parse a non-negative integer or the literal ``none``."""
     if value.casefold() == "none":
@@ -378,18 +459,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_path=output_path,
             output_dir=arguments.output_dir,
             overwrite_products=arguments.overwrite_products,
+            grid_calibration_path=arguments.grid_calibration,
+            sidereal_config=_sidereal_config(arguments),
+            overwrite_solution=arguments.overwrite_solution,
         )
         detection_state = (
             "cached" if summary.reused_detection_product else "computed"
         )
         tracking_state = "cached" if summary.reused_tracking_product else "computed"
+        solution_note = ""
+        if summary.sidereal_product_path is not None:
+            solution_state = (
+                "cached" if summary.reused_sidereal_product else "computed"
+            )
+            solution_note = f" | sidereal {solution_state}"
         print(
             f"Wrote {summary.output_path} | {summary.file_count} images | "
             f"{summary.detection_count} detections | {summary.track_count} tracks | "
             f"{summary.assigned_detection_count} assigned | "
             f"{summary.unassigned_detection_count} unassigned | "
             f"{summary.skipped_file_count} skipped before detection | "
-            f"detections {detection_state} | tracks {tracking_state}"
+            f"detections {detection_state} | tracks {tracking_state}{solution_note}"
         )
 
     return 0

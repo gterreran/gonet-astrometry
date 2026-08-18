@@ -152,6 +152,7 @@ module = [
   "matplotlib.*",
   "dash.*",
   "GONet_Wizard.*",
+  "grid_calibration.*",
   "photutils.*",
   "plotly.*",
   "webview",

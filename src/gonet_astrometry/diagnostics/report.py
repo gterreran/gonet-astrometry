@@ -12,6 +12,7 @@ from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
+from gonet_astrometry.adapters.grid_calibration import grid_pole_pixel
 from gonet_astrometry.adapters.gonet_wizard import GONetChannel
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.models.detection import DetectionClass
@@ -37,6 +38,12 @@ _TRACK_STYLES: dict[TrackClass, tuple[str, str, str]] = {
     "candidate": ("Candidate tracks", "#34d399", "o"),
     "low-motion": ("Low-motion tracks", "#94a3b8", "D"),
     "poor-fit": ("Poor-fit tracks", "#fb7185", "x"),
+}
+
+_SIDEREAL_TRACK_STYLES: dict[str, tuple[str, str]] = {
+    "sidereal-consistent": ("Sidereal-consistent", "#22c55e"),
+    "sidereal-rejected": ("Sidereal-rejected", "#ef4444"),
+    "insufficient": ("Insufficient", "#94a3b8"),
 }
 
 
@@ -142,9 +149,17 @@ def write_tracking_report_pdf(
         )
     figure.subplots_adjust(left=0.07, right=0.78, top=0.90, bottom=0.11)
     temporal_figure = _build_temporal_diagnostic_figure(artifacts)
+    sidereal_figure = (
+        _build_sidereal_diagnostic_figure(artifacts, image_data)
+        if artifacts.sidereal_solution is not None
+        and artifacts.grid_calibration is not None
+        else None
+    )
     with PdfPages(destination) as pdf:
         pdf.savefig(figure)
         pdf.savefig(temporal_figure)
+        if sidereal_figure is not None:
+            pdf.savefig(sidereal_figure)
     return destination
 
 
@@ -232,6 +247,163 @@ def _build_temporal_diagnostic_figure(
     figure.subplots_adjust(left=0.08, right=0.97, top=0.90, bottom=0.13, hspace=0.35)
     return figure
 
+
+
+def _build_sidereal_diagnostic_figure(
+    artifacts: TrackingRunArtifacts,
+    image_data: NDArray[np.float64],
+) -> Figure:
+    """Return a report page for the shared fixed-rate sidereal rotation fit."""
+    solution = artifacts.sidereal_solution
+    calibration = artifacts.grid_calibration
+    if solution is None or calibration is None:  # pragma: no cover - caller guards
+        raise ValueError("Sidereal diagnostics require a solution and Grid calibration")
+
+    figure = Figure(figsize=(12.0, 8.5))
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(2, 2)
+    image_axis = axes[0, 0]
+    lower, upper = _display_limits(image_data)
+    image_axis.imshow(
+        image_data,
+        cmap="gray",
+        origin="upper",
+        vmin=lower,
+        vmax=upper,
+        interpolation="nearest",
+    )
+    diagnostics = {
+        item.track_identifier: item for item in solution.track_diagnostics
+    }
+    for class_name, (label, color) in _SIDEREAL_TRACK_STYLES.items():
+        tracks = [
+            track
+            for track in artifacts.tracking_result.tracks
+            if diagnostics[track.identifier].diagnostic_class == class_name
+        ]
+        first = True
+        for track in tracks:
+            resolved = artifacts.tracking_result.resolve(track)
+            image_axis.plot(
+                [point.detection.x / 2.0 for point in resolved],
+                [point.detection.y / 2.0 for point in resolved],
+                color=color,
+                linewidth=0.6,
+                alpha=0.75 if class_name != "insufficient" else 0.25,
+                label=f"{label} ({len(tracks)})" if first else None,
+            )
+            first = False
+    pole_pixel = grid_pole_pixel(calibration, solution.axis_grid)
+    if pole_pixel is not None:
+        image_axis.scatter(
+            [pole_pixel[0] / 2.0],
+            [pole_pixel[1] / 2.0],
+            s=100,
+            marker="*",
+            facecolors="#facc15",
+            edgecolors="black",
+            linewidths=0.8,
+            label="Fitted apparent rotation pole",
+            zorder=20,
+        )
+    image_axis.set_title("Track consistency in image coordinates")
+    image_axis.set_xlabel("Compact channel column")
+    image_axis.set_ylabel("Compact channel row")
+    image_axis.set_xlim(-0.5, image_data.shape[1] - 0.5)
+    image_axis.set_ylim(image_data.shape[0] - 0.5, -0.5)
+    image_axis.set_aspect("equal")
+    handles, labels = image_axis.get_legend_handles_labels()
+    if handles:
+        image_axis.legend(handles, labels, fontsize=6, frameon=False, loc="best")
+
+    sufficient = [
+        item
+        for item in solution.track_diagnostics
+        if item.rms_residual_deg is not None
+    ]
+    rms_arcmin = np.asarray(
+        [60.0 * item.rms_residual_deg for item in sufficient],
+        dtype=np.float64,
+    )
+    if rms_arcmin.size:
+        axes[0, 1].hist(
+            rms_arcmin,
+            bins=min(60, max(10, int(np.sqrt(rms_arcmin.size)))),
+        )
+    threshold_arcmin = (
+        60.0 * artifacts.sidereal_fit_config.consistent_rms_deg
+        if artifacts.sidereal_fit_config is not None
+        else np.nan
+    )
+    if np.isfinite(threshold_arcmin):
+        axes[0, 1].axvline(
+            threshold_arcmin,
+            linestyle="--",
+            linewidth=1.0,
+            label=f"Consistency threshold ({threshold_arcmin:.1f} arcmin)",
+        )
+        axes[0, 1].legend(fontsize=7, frameon=False)
+    axes[0, 1].set_title("Per-track sidereal residuals")
+    axes[0, 1].set_xlabel("De-rotated RMS (arcmin)")
+    axes[0, 1].set_ylabel("Count")
+
+    duration_minutes = np.asarray(
+        [item.duration_s / 60.0 for item in sufficient], dtype=np.float64
+    )
+    class_colors = [
+        _SIDEREAL_TRACK_STYLES[item.diagnostic_class][1] for item in sufficient
+    ]
+    if rms_arcmin.size:
+        axes[1, 0].scatter(
+            duration_minutes,
+            rms_arcmin,
+            s=8,
+            c=class_colors,
+            alpha=0.6,
+            linewidths=0,
+        )
+    axes[1, 0].set_title("Residual versus track duration")
+    axes[1, 0].set_xlabel("Track duration (min)")
+    axes[1, 0].set_ylabel("De-rotated RMS (arcmin)")
+
+    counts = solution.diagnostic_counts()
+    labels = ["Consistent", "Rejected", "Insufficient"]
+    values = [
+        counts["sidereal-consistent"],
+        counts["sidereal-rejected"],
+        counts["insufficient"],
+    ]
+    colors = ["#22c55e", "#ef4444", "#94a3b8"]
+    axes[1, 1].bar(labels, values, color=colors)
+    axes[1, 1].set_title("Spherical track classification")
+    axes[1, 1].set_ylabel("Tracks")
+
+    figure.suptitle("GONet Astrometry Sidereal Rotation Diagnostics", fontsize=14)
+    figure.text(
+        0.01,
+        0.015,
+        (
+            f"axis Grid-frame r/theta = {solution.axis_r_deg:.4f}/"
+            f"{solution.axis_theta_deg:.4f} deg | rotation sign "
+            f"{solution.rotation_sign:+d} | vector "
+            f"[{solution.axis_grid[0]:+.6f}, {solution.axis_grid[1]:+.6f}, "
+            f"{solution.axis_grid[2]:+.6f}]\n"
+            f"global fit RMS/median/P95 = "
+            f"{60.0 * solution.fit_rms_deg:.3f}/"
+            f"{60.0 * solution.fit_median_deg:.3f}/"
+            f"{60.0 * solution.fit_p95_deg:.3f} arcmin | "
+            f"fitted tracks={solution.fitted_track_count} | "
+            f"fitted points={solution.fitted_point_count}"
+        ),
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        family="monospace",
+    )
+    figure.subplots_adjust(
+        left=0.07, right=0.97, top=0.90, bottom=0.13, hspace=0.34, wspace=0.26
+    )
+    return figure
 
 def _draw_detections(axis: object, artifacts: TrackingRunArtifacts) -> None:
     """Draw reference-image detections grouped by diagnostic class."""

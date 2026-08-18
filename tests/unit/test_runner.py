@@ -472,3 +472,182 @@ def test_run_cli_workflow_reuses_products_before_expensive_steps(
     assert third.reused_detection_product is True
     assert third.reused_tracking_product is False
     assert tracking_calls == [changed_tracking]
+
+
+def test_run_cli_workflow_reuses_sidereal_solution_independently(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from gonet_astrometry.models.grid import GridCalibration
+    from gonet_astrometry.solving.sidereal import (
+        SiderealFitConfig,
+        SiderealRotationSolution,
+        SiderealTrackDiagnostics,
+    )
+    from gonet_astrometry.tracking.image_plane import ImagePlaneTracker
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    paths = tuple((tmp_path / f"sidereal-{index}.jpg").resolve() for index in range(2))
+    for index, path in enumerate(paths):
+        path.write_bytes(b"raw" + bytes([index]))
+    grid_path = tmp_path / "camera_calibration.npz"
+    grid_path.write_bytes(b"portable grid")
+
+    prepared = _prepared()
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = tuple(
+        DetectionCatalog(
+            str(path),
+            (Detection(index, 5.0 + index, 6.0, 10.0, 10.0, 0.5, 0.5),),
+            "sep",
+        )
+        for index, path in enumerate(paths)
+    )
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=False)
+        ]
+    )
+    tracking_config = TrackingConfig(
+        min_track_length=2,
+        prediction_tolerance_px=3.0,
+    )
+    tracking = ImagePlaneTracker(tracking_config).track(sequence)
+    detected = DetectionRunArtifacts(
+        files=paths,
+        algorithm="sep",
+        sequence=sequence,
+        reference_path=paths[0],
+        reference_catalog=catalogs[0],
+        reference_prepared=prepared,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.execute_detection_run",
+        lambda *args, **kwargs: detected,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._track_sequence",
+        lambda sequence, config: tracking,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_file_raw",
+        lambda path, parse_metadata=False: object(),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.get_raw_channel",
+        lambda raw, channel: np.zeros((10, 10), dtype=float),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.write_tracking_report_pdf",
+        lambda path, **kwargs: path.resolve(),
+    )
+
+    class Transform:
+        def pixel_to_ray(self, x, y):
+            del y
+            return np.zeros(np.asarray(x).shape + (3,), dtype=float)
+
+    calibration = GridCalibration(
+        transform=Transform(),
+        image_shape=(20, 20),
+        coordinate_convention="test",
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_grid_calibration",
+        lambda path: calibration,
+    )
+    track_identifier = tracking.tracks[0].identifier
+    solution = SiderealRotationSolution(
+        axis_grid=np.asarray([0.0, 0.6, 0.8]),
+        fit_rms_deg=0.02,
+        fit_median_deg=0.01,
+        fit_p95_deg=0.04,
+        fitted_track_count=1,
+        fitted_point_count=2,
+        track_diagnostics=(
+            SiderealTrackDiagnostics(
+                track_identifier=track_identifier,
+                diagnostic_class="sidereal-consistent",
+                total_point_count=2,
+                valid_point_count=2,
+                duration_s=60.0,
+                angular_span_deg=1.0,
+                rms_residual_deg=0.02,
+                median_residual_deg=0.01,
+                max_residual_deg=0.04,
+            ),
+        ),
+    )
+    fit_calls: list[int] = []
+
+    def fake_fit(self, tracking_result, grid):
+        del self, tracking_result, grid
+        fit_calls.append(1)
+        return solution
+
+    monkeypatch.setattr("gonet_astrometry.runner.SiderealAxisFitter.fit", fake_fit)
+    product_dir = tmp_path / "products"
+    fit_config = SiderealFitConfig(
+        min_track_points=3,
+        min_track_duration_minutes=1.0,
+    )
+
+    first = run_cli_workflow(
+        [tmp_path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=tracking_config,
+        channel="green1",
+        output_path=tmp_path / "first.pdf",
+        output_dir=product_dir,
+        grid_calibration_path=grid_path,
+        sidereal_config=fit_config,
+        metadata_loader=lambda path: frames[paths.index(path)].metadata,
+    )
+    assert first.reused_sidereal_product is False
+    assert first.sidereal_product_path == (
+        product_dir / "sidereal_rotation.npz"
+    ).resolve()
+    assert fit_calls == [1]
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._prepare_cached_reference",
+        lambda product, config: (prepared, catalogs[0]),
+    )
+    second = run_cli_workflow(
+        [tmp_path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=tracking_config,
+        channel="green1",
+        output_path=tmp_path / "second.pdf",
+        output_dir=product_dir,
+        grid_calibration_path=grid_path,
+        sidereal_config=fit_config,
+        metadata_loader=lambda path: frames[paths.index(path)].metadata,
+    )
+    assert second.reused_detection_product is True
+    assert second.reused_tracking_product is True
+    assert second.reused_sidereal_product is True
+    assert fit_calls == [1]
+
+    third = run_cli_workflow(
+        [tmp_path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=tracking_config,
+        channel="green1",
+        output_path=tmp_path / "third.pdf",
+        output_dir=product_dir,
+        grid_calibration_path=grid_path,
+        sidereal_config=fit_config,
+        overwrite_solution=True,
+        metadata_loader=lambda path: frames[paths.index(path)].metadata,
+    )
+    assert third.reused_detection_product is True
+    assert third.reused_tracking_product is True
+    assert third.reused_sidereal_product is False
+    assert fit_calls == [1, 1]

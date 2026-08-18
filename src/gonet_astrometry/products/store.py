@@ -28,6 +28,11 @@ class ProductStore:
         """Return the portable bootstrap-track product path."""
         return self.output_dir / "tracks.npz"
 
+    @property
+    def sidereal_path(self) -> Path:
+        """Return the portable Grid-calibrated sidereal solution path."""
+        return self.output_dir / "sidereal_rotation.npz"
+
     def ensure(self) -> None:
         """Create the output directory when necessary."""
         self.output_dir.mkdir(parents=True, exist_ok=True)

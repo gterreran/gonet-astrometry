@@ -12,7 +12,6 @@ from gonet_astrometry.adapters.gonet_wizard import (
     load_gonet_file_raw,
     load_gonet_image,
     load_gonet_metadata,
-    load_grid_calibration,
     reconstruct_bayer_mosaic,
 )
 
@@ -183,7 +182,3 @@ def test_load_gonet_metadata_skips_bayer_reconstruction(monkeypatch) -> None:
     assert metadata.location.latitude_deg == 41.88
     assert metadata.source_path == Path("frame.jpg")
     assert calls == [(Path("frame.jpg"), True)]
-
-def test_grid_adapter_is_explicitly_unimplemented() -> None:
-    with pytest.raises(NotImplementedError, match="Grid calibration adapter"):
-        load_grid_calibration(Path("grid.json"))

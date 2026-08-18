@@ -15,13 +15,22 @@ from gonet_astrometry.models.track import StarTrack, TrackDiagnostics, TrackPoin
 from gonet_astrometry.products import (
     DetectionProduct,
     ProductMismatchError,
+    SiderealProduct,
     TrackingProduct,
     detection_product_id,
     load_detection_product,
+    load_sidereal_product,
     load_tracking_product,
     save_detection_product,
+    save_sidereal_product,
     save_tracking_product,
+    sidereal_product_id,
     tracking_product_id,
+)
+from gonet_astrometry.solving.sidereal import (
+    SiderealFitConfig,
+    SiderealRotationSolution,
+    SiderealTrackDiagnostics,
 )
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.image_plane import ImagePlaneTrackingResult
@@ -196,4 +205,72 @@ def test_detection_product_id_changes_when_input_changes(tmp_path: Path) -> None
         [path], "sep", config, location_tolerance_m=250.0
     )
 
+    assert first != second
+
+
+def test_sidereal_product_round_trip_is_pickle_free(tmp_path: Path) -> None:
+    grid_path = tmp_path / "camera_calibration.npz"
+    grid_path.write_bytes(b"grid calibration")
+    config = SiderealFitConfig()
+    product_id = sidereal_product_id("tracks-id", grid_path, config)
+    solution = SiderealRotationSolution(
+        axis_grid=np.asarray([0.0, 0.6, 0.8], dtype=float),
+        fit_rms_deg=0.02,
+        fit_median_deg=0.01,
+        fit_p95_deg=0.04,
+        fitted_track_count=12,
+        fitted_point_count=240,
+        track_diagnostics=(
+            SiderealTrackDiagnostics(
+                track_identifier=4,
+                diagnostic_class="sidereal-consistent",
+                total_point_count=20,
+                valid_point_count=19,
+                duration_s=1200.0,
+                angular_span_deg=2.5,
+                rms_residual_deg=0.02,
+                median_residual_deg=0.01,
+                max_residual_deg=0.05,
+            ),
+            SiderealTrackDiagnostics(
+                track_identifier=5,
+                diagnostic_class="insufficient",
+                total_point_count=3,
+                valid_point_count=2,
+                duration_s=20.0,
+                angular_span_deg=0.01,
+            ),
+        ),
+    )
+    product = SiderealProduct(
+        product_id=product_id,
+        tracking_product_id="tracks-id",
+        grid_calibration_path=grid_path.resolve(),
+        fit_config=config,
+        solution=solution,
+    )
+    path = save_sidereal_product(tmp_path / "sidereal_rotation.npz", product)
+
+    with np.load(path, allow_pickle=False) as data:
+        assert data["format"].item() == "gonet-astrometry-sidereal-rotation"
+        assert data["version"].item() == 1
+
+    loaded = load_sidereal_product(
+        path,
+        expected_product_id=product_id,
+        expected_tracking_product_id="tracks-id",
+    )
+    assert loaded.product_id == product_id
+    assert loaded.fit_config == config
+    assert np.allclose(loaded.solution.axis_grid, solution.axis_grid)
+    assert loaded.solution.track_diagnostics == solution.track_diagnostics
+
+
+def test_sidereal_product_id_changes_when_grid_artifact_changes(tmp_path: Path) -> None:
+    grid_path = tmp_path / "camera_calibration.npz"
+    grid_path.write_bytes(b"first")
+    config = SiderealFitConfig()
+    first = sidereal_product_id("tracks-id", grid_path, config)
+    grid_path.write_bytes(b"second calibration")
+    second = sidereal_product_id("tracks-id", grid_path, config)
     assert first != second

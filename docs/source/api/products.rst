@@ -22,6 +22,12 @@ Tracking products
 .. automodule:: gonet_astrometry.products.tracks
    :members:
 
+Sidereal-rotation products
+--------------------------
+
+.. automodule:: gonet_astrometry.products.sidereal
+   :members:
+
 Product errors
 --------------
 

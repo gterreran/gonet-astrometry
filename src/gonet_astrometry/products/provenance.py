@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.solving.sidereal import SiderealFitConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 
 DETECTION_PIPELINE_REVISION = 1
@@ -16,6 +17,9 @@ DETECTION_PIPELINE_REVISION = 1
 
 TRACKING_PIPELINE_REVISION = 1
 """Manual cache revision for changes to bootstrap-tracking semantics."""
+
+SIDEREAL_PIPELINE_REVISION = 2
+"""Manual cache revision for Grid-calibrated sidereal-fitting semantics."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +110,24 @@ def tracking_product_id(
     }
     return _digest(payload)
 
+
+
+def sidereal_product_id(
+    tracking_id: str,
+    grid_calibration_path: Path,
+    config: SiderealFitConfig,
+) -> str:
+    """Return the semantic identity of a Grid-calibrated sidereal solution."""
+    calibration = fingerprint_inputs((grid_calibration_path,))[0]
+    payload = {
+        "kind": "sidereal-rotation",
+        "schema_version": 1,
+        "pipeline_revision": SIDEREAL_PIPELINE_REVISION,
+        "tracking_product_id": tracking_id,
+        "grid_calibration": calibration.as_mapping(),
+        "fit_config": asdict(config),
+    }
+    return _digest(payload)
 
 def _digest(payload: dict[str, Any]) -> str:
     """Return a stable SHA-256 digest for a JSON-compatible mapping."""

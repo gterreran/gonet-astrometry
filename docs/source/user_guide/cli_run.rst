@@ -88,6 +88,7 @@ default layout is::
    gonet_astrometry_output/
        detections.npz
        tracks.npz
+       sidereal_rotation.npz    # when --grid-calibration is supplied
        tracking.pdf
 
 Use ``--output-dir`` to choose a different directory. ``--output`` may still
@@ -123,10 +124,62 @@ large raw files merely to validate the cache would erase much of the benefit.
 The cache instead uses absolute path, file size, and nanosecond modification
 time as a conservative and inexpensive source fingerprint.
 
+
+Grid-calibrated sidereal rotation
+---------------------------------
+
+Supplying the portable ``*_calibration.npz`` artifact from the Grid Calibration
+package enables the first physical astrometry stage::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --output-dir gonet_astrometry_output \
+       --grid-calibration /path/to/202_250116_204846_calibration.npz
+
+The Grid package is imported only when this option is used. The artifact sensor
+dimensions and explicit upper-left ``x=column, y=row`` convention are validated
+against the full native Bayer coordinates stored in ``detections.npz``. Pixel
+coordinates are inverted through the complete Grid harmonic model without
+extrapolating beyond its calibrated angular radius. Track points outside that
+domain are marked unavailable rather than aborting the complete fit.
+
+For every sufficiently long bootstrap track, the calibrated directions are
+converted to unit rays in the Grid frame. A robust optimizer then requires the
+rays to follow one common rotation axis at the fixed sidereal angular rate. No
+uniform image cadence is assumed; every rotation angle is computed from the
+actual exposure midpoint. The resulting track classes are
+``sidereal-consistent``, ``sidereal-rejected``, and ``insufficient``.
+
+The common-axis fit is deliberately robust to the large number of fragmented or
+non-stellar bootstrap tracks that can occur in a full-night sequence.  The
+solver first estimates an unsigned small-circle axis from each sufficiently
+curved ``candidate`` track, finds the largest antipodal consensus of those
+per-track axes, uses the timestamps and fixed sidereal rate to choose the
+rotation sense, and then refines only tracks that are already broadly
+consistent with that preliminary physical model.  ``low-motion`` and
+``poor-fit`` bootstrap tracks are still scored by the final solution but do not
+normally determine the fitted pole.
+
+The fitted product is written as ``sidereal_rotation.npz`` and, like the other
+mid-level products, contains no pickle/object arrays. Its provenance depends on
+the tracking product, Grid-calibration file fingerprint, solver configuration,
+and a manual solver revision. Compatible solutions are reused automatically.
+Use ``--overwrite-solution`` to rerun only this stage while preserving cached
+detections and tracks. ``--overwrite-products`` still forces the complete
+workflow from detection onward.
+
+The principal fitting controls are ``--sidereal-min-track-points``,
+``--sidereal-min-duration-minutes``, ``--sidereal-min-span-deg``,
+``--sidereal-robust-scale-deg``, and ``--sidereal-consistent-rms-deg``. Long
+runs can limit optimization cost with ``--sidereal-max-fit-tracks`` and
+``--sidereal-max-points-per-track``; all tracks are scored after the global axis
+has been fitted.
+
 PDF diagnostic
 --------------
 
-The generated PDF contains two pages. The first is the static image-plane
+Without a Grid calibration the generated PDF contains two pages. The first is
+the static image-plane
 tracking view based on the first discovered input image: selected compact native
 channel, usable-field boundary, dynamic bright-region mask, reference-image
 detections, and complete bootstrap track histories.
@@ -137,3 +190,10 @@ coverage. Summary statistics include minimum, median, 90th-percentile, and
 maximum cadence intervals plus track-length and duration statistics. These
 measurements make track fragmentation visible without assuming that the input
 images are evenly spaced in time.
+
+
+When ``--grid-calibration`` is supplied, a third page summarizes the shared
+sidereal fit. It overlays consistent/rejected/insufficient tracks, marks the
+fitted apparent rotation pole when it lies inside Grid coverage, plots the
+per-track de-rotated residual distribution and residual versus track duration,
+and records the Grid-frame pole vector and global RMS/median/P95 residuals.
