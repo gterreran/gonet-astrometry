@@ -21,6 +21,7 @@ from gonet_astrometry.adapters.gonet_wizard import (
     load_gonet_image,
     load_gonet_metadata,
 )
+from gonet_astrometry.catalogs import load_or_fetch_bright_star_catalog
 from gonet_astrometry.detection.base import SourceDetector
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.diagnostics import enrich_detection_catalog
@@ -36,19 +37,28 @@ from gonet_astrometry.models.frame import ImageFrame, ImageMetadata
 from gonet_astrometry.models.grid import GridCalibration
 from gonet_astrometry.products import (
     DetectionProduct,
+    OrientationProduct,
     ProductError,
     ProductStore,
     SiderealProduct,
     TrackingProduct,
     detection_product_id,
     load_detection_product,
+    load_orientation_product,
     load_sidereal_product,
     load_tracking_product,
+    orientation_product_id,
     save_detection_product,
+    save_orientation_product,
     save_sidereal_product,
     save_tracking_product,
     sidereal_product_id,
     tracking_product_id,
+)
+from gonet_astrometry.solving.orientation import (
+    AbsoluteOrientationSolution,
+    AbsoluteOrientationSolver,
+    OrientationFitConfig,
 )
 from gonet_astrometry.solving.sidereal import (
     SiderealAxisFitter,
@@ -143,6 +153,8 @@ class TrackingRunArtifacts:
     grid_calibration: GridCalibration | None = None
     sidereal_solution: SiderealRotationSolution | None = None
     sidereal_fit_config: SiderealFitConfig | None = None
+    orientation_solution: AbsoluteOrientationSolution | None = None
+    orientation_fit_config: OrientationFitConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,9 +174,11 @@ class RunSummary:
     detection_product_path: Path | None = None
     tracking_product_path: Path | None = None
     sidereal_product_path: Path | None = None
+    orientation_product_path: Path | None = None
     reused_detection_product: bool = False
     reused_tracking_product: bool = False
     reused_sidereal_product: bool = False
+    reused_orientation_product: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -404,19 +418,57 @@ def execute_tracking_run(
     )
 
 
+def _resolve_report_reference_path(
+    sequence: DetectionSequence,
+    default_path: Path,
+    requested_path: Path | None,
+) -> Path:
+    """Return the retained sequence image to use as the static report background.
+
+    The report reference is deliberately independent of product provenance. Changing
+    it must never invalidate detections, tracking, or downstream astrometric products.
+    """
+    reference = (requested_path or default_path).expanduser().resolve()
+    retained = {epoch.source_path.expanduser().resolve() for epoch in sequence.epochs}
+    if reference not in retained:
+        raise ValueError(
+            "Report reference image is not part of the retained detection sequence: "
+            f"{reference}"
+        )
+    return reference
+
+
+def _prepare_report_reference(
+    sequence: DetectionSequence,
+    reference_path: Path,
+    detection_config: DetectionConfig,
+    *,
+    frame_loader: FrameLoader = load_gonet_image,
+) -> tuple[PreparedDetectionImage, DetectionCatalog]:
+    """Prepare one selected report image and retrieve its cached detections."""
+    frame = frame_loader(reference_path)
+    prepared = prepare_bayer_detection_image(frame, detection_config)
+    catalog = sequence.catalog_for(str(reference_path))
+    if catalog is None:
+        raise ValueError(
+            f"Detection product is missing the catalog for report image {reference_path}"
+        )
+    return prepared, catalog
+
+
 def _prepare_cached_reference(
     product: DetectionProduct,
     detection_config: DetectionConfig,
     *,
     frame_loader: FrameLoader = load_gonet_image,
 ) -> tuple[PreparedDetectionImage, DetectionCatalog]:
-    """Prepare only the report reference frame for a cached sequence."""
-    frame = frame_loader(product.reference_path)
-    prepared = prepare_bayer_detection_image(frame, detection_config)
-    catalog = product.sequence.catalog_for(str(product.reference_path))
-    if catalog is None:
-        raise ValueError("Cached detection product is missing its reference catalog")
-    return prepared, catalog
+    """Prepare the detection product's original report reference image."""
+    return _prepare_report_reference(
+        product.sequence,
+        product.reference_path,
+        detection_config,
+        frame_loader=frame_loader,
+    )
 
 
 def run_cli_workflow(
@@ -428,11 +480,16 @@ def run_cli_workflow(
     tracking_config: TrackingConfig,
     channel: GONetChannel,
     output_path: Path,
+    reference_image_path: Path | None = None,
     output_dir: Path | None = None,
     overwrite_products: bool = False,
     grid_calibration_path: Path | None = None,
     sidereal_config: SiderealFitConfig | None = None,
     overwrite_solution: bool = False,
+    solve_orientation: bool = False,
+    orientation_config: OrientationFitConfig | None = None,
+    catalog_cache_path: Path | None = None,
+    overwrite_orientation: bool = False,
     metadata_loader: MetadataLoader = load_gonet_metadata,
 ) -> RunSummary:
     """Discover inputs, reuse compatible products, and write the PDF report.
@@ -533,16 +590,35 @@ def run_cli_workflow(
             len(detection_product.sequence.epochs),
             detection_product.sequence.total_detections,
         )
-        reference_prepared = detected.reference_prepared
-        reference_catalog = detected.reference_catalog
     else:
         detection_product.sequence.validate_locations(
             tracking_config.location_tolerance_m
         )
         _log_sequence_timing(detection_product.sequence)
+
+    report_reference_path = _resolve_report_reference_path(
+        detection_product.sequence,
+        detection_product.reference_path,
+        reference_image_path,
+    )
+    if (
+        not reused_detection
+        and report_reference_path == detection_product.reference_path
+    ):
+        reference_prepared = detected.reference_prepared
+        reference_catalog = detected.reference_catalog
+    elif report_reference_path == detection_product.reference_path:
         reference_prepared, reference_catalog = _prepare_cached_reference(
             detection_product, detection_config
         )
+    else:
+        reference_prepared, reference_catalog = _prepare_report_reference(
+            detection_product.sequence,
+            report_reference_path,
+            detection_config,
+        )
+    if reference_image_path is not None:
+        logger.info("Using report reference image %s", report_reference_path)
 
     expected_tracking_id = tracking_product_id(
         detection_product.product_id, tracking_config
@@ -594,7 +670,11 @@ def run_cli_workflow(
     grid_calibration: GridCalibration | None = None
     sidereal_solution: SiderealRotationSolution | None = None
     sidereal_fit_config: SiderealFitConfig | None = None
+    orientation_solution: AbsoluteOrientationSolution | None = None
+    orientation_fit_config: OrientationFitConfig | None = None
     sidereal_product_path: Path | None = None
+    orientation_product_path: Path | None = None
+    current_sidereal_product_id: str | None = None
     reused_sidereal = False
     if grid_calibration_path is not None:
         sidereal_fit_config = sidereal_config or SiderealFitConfig()
@@ -605,6 +685,7 @@ def run_cli_workflow(
             grid_path,
             sidereal_fit_config,
         )
+        current_sidereal_product_id = expected_sidereal_id
         sidereal_product: SiderealProduct | None = None
         if (
             reused_tracking
@@ -664,17 +745,116 @@ def run_cli_workflow(
             sidereal_solution = sidereal_product.solution
         sidereal_product_path = store.sidereal_path.resolve()
 
+    reused_orientation = False
+    if solve_orientation:
+        if (
+            grid_calibration is None
+            or sidereal_solution is None
+            or current_sidereal_product_id is None
+        ):
+            raise ValueError(
+                "Absolute orientation requires --grid-calibration and a "
+                "sidereal solution"
+            )
+        orientation_fit_config = orientation_config or OrientationFitConfig()
+        cache_path = (
+            catalog_cache_path or store.bright_star_catalog_path
+        ).expanduser().resolve()
+        catalog_was_cached = cache_path.exists()
+        bright_catalog = load_or_fetch_bright_star_catalog(cache_path)
+        if catalog_was_cached:
+            logger.info("Reusing bright-star catalog cache %s", cache_path)
+        else:
+            logger.info(
+                "Fetched and cached Bright Star Catalogue %s | %d stars",
+                cache_path,
+                len(bright_catalog.stars),
+            )
+        expected_orientation_id = orientation_product_id(
+            current_sidereal_product_id,
+            cache_path,
+            orientation_fit_config,
+        )
+        orientation_product: OrientationProduct | None = None
+        if (
+            reused_sidereal
+            and store.orientation_path.exists()
+            and not overwrite_products
+            and not overwrite_solution
+            and not overwrite_orientation
+        ):
+            try:
+                orientation_product = load_orientation_product(
+                    store.orientation_path,
+                    expected_product_id=expected_orientation_id,
+                    expected_sidereal_product_id=current_sidereal_product_id,
+                )
+                reused_orientation = True
+                logger.info(
+                    "Reusing orientation product %s | optical axis az=%.3f deg "
+                    "alt=%.3f deg | %d catalog matches",
+                    store.orientation_path,
+                    orientation_product.solution.optical_axis_azimuth_deg,
+                    orientation_product.solution.optical_axis_altitude_deg,
+                    len(orientation_product.solution.matches),
+                )
+            except ProductError as exc:
+                logger.warning(
+                    "Ignoring incompatible orientation product %s: %s",
+                    store.orientation_path,
+                    exc,
+                )
+        if orientation_product is None:
+            bright_stars = bright_catalog.query_bright_stars(
+                detection_product.sequence.epochs[0].exposure_midpoint,
+                orientation_fit_config.limiting_magnitude,
+            )
+            orientation_solution = AbsoluteOrientationSolver(
+                orientation_fit_config
+            ).fit(
+                tracking_product.result,
+                sidereal_solution,
+                grid_calibration,
+                bright_stars,
+            )
+            orientation_product = OrientationProduct(
+                product_id=expected_orientation_id,
+                sidereal_product_id=current_sidereal_product_id,
+                catalog_path=cache_path,
+                fit_config=orientation_fit_config,
+                solution=orientation_solution,
+            )
+            written_orientation = save_orientation_product(
+                store.orientation_path, orientation_product
+            )
+            logger.info(
+                "Wrote orientation product %s | optical axis az=%.3f deg "
+                "alt=%.3f deg | twist %.3f deg | %d matches | median residual "
+                "%.3f arcmin",
+                written_orientation,
+                orientation_solution.optical_axis_azimuth_deg,
+                orientation_solution.optical_axis_altitude_deg,
+                orientation_solution.twist_deg,
+                len(orientation_solution.matches),
+                60.0 * orientation_solution.fit_median_deg,
+            )
+        else:
+            orientation_solution = orientation_product.solution
+        orientation_product_path = store.orientation_path.resolve()
+
     artifacts = TrackingRunArtifacts(
         files=tuple(epoch.source_path for epoch in detection_product.sequence.epochs),
         algorithm=algorithm,
         sequence=detection_product.sequence,
         tracking_result=tracking_product.result,
-        reference_path=detection_product.reference_path,
+        reference_path=report_reference_path,
         reference_catalog=reference_catalog,
         reference_prepared=reference_prepared,
         grid_calibration=grid_calibration,
         sidereal_solution=sidereal_solution,
         sidereal_fit_config=sidereal_fit_config,
+        orientation_solution=orientation_solution,
+        orientation_fit_config=orientation_fit_config,
     )
     raw = load_gonet_file_raw(artifacts.reference_path, parse_metadata=False)
     display_data = get_raw_channel(raw, channel)
@@ -701,7 +881,9 @@ def run_cli_workflow(
         detection_product_path=store.detections_path.resolve(),
         tracking_product_path=store.tracks_path.resolve(),
         sidereal_product_path=sidereal_product_path,
+        orientation_product_path=orientation_product_path,
         reused_detection_product=reused_detection,
         reused_tracking_product=reused_tracking,
         reused_sidereal_product=reused_sidereal,
+        reused_orientation_product=reused_orientation,
     )

@@ -28,6 +28,12 @@ Sidereal-rotation products
 .. automodule:: gonet_astrometry.products.sidereal
    :members:
 
+Absolute-orientation products
+-----------------------------
+
+.. automodule:: gonet_astrometry.products.orientation
+   :members:
+
 Product errors
 --------------
 

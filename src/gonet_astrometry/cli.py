@@ -11,12 +11,14 @@ from gonet_astrometry import __version__
 from gonet_astrometry.adapters.gonet_wizard import GONET_CHANNELS
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.registry import DETECTOR_SPECS
+from gonet_astrometry.solving.orientation import OrientationFitConfig
 from gonet_astrometry.solving.sidereal import SiderealFitConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 
 _DETECTION_DEFAULTS = DetectionConfig()
 _TRACKING_DEFAULTS = TrackingConfig()
 _SIDEREAL_DEFAULTS = SiderealFitConfig()
+_ORIENTATION_DEFAULTS = OrientationFitConfig()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -82,6 +84,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compact native channel used as the PDF background.",
     )
     run.add_argument(
+        "--reference-image",
+        type=Path,
+        default=None,
+        help=(
+            "Image from the retained sequence to use as the PDF background. "
+            "Defaults to the detection product's original reference image. "
+            "This option affects report rendering only."
+        ),
+    )
+    run.add_argument(
         "--output-dir",
         type=Path,
         default=Path("gonet_astrometry_output"),
@@ -124,9 +136,36 @@ def build_parser() -> argparse.ArgumentParser:
             "compatible detection and tracking products."
         ),
     )
+    run.add_argument(
+        "--solve-orientation",
+        action="store_true",
+        help=(
+            "Resolve the final camera-attitude degree of freedom by matching "
+            "sidereal-consistent tracks to the Bright Star Catalogue."
+        ),
+    )
+    run.add_argument(
+        "--catalog-cache",
+        type=Path,
+        default=None,
+        help=(
+            "Portable Bright Star Catalogue cache. When omitted, use "
+            "<output-dir>/bright_star_catalog.npz and fetch it from VizieR "
+            "only if absent."
+        ),
+    )
+    run.add_argument(
+        "--overwrite-orientation",
+        action="store_true",
+        help=(
+            "Recompute only the catalog-assisted absolute orientation while "
+            "retaining compatible upstream products."
+        ),
+    )
     _add_detection_arguments(run)
     _add_tracking_arguments(run)
     _add_sidereal_arguments(run)
+    _add_orientation_arguments(run)
     return parser
 
 
@@ -281,7 +320,6 @@ def _add_tracking_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-
 def _add_sidereal_arguments(parser: argparse.ArgumentParser) -> None:
     """Add shared sidereal-axis fitting parameters to ``parser``."""
     parser.add_argument(
@@ -338,6 +376,121 @@ def _sidereal_config(arguments: argparse.Namespace) -> SiderealFitConfig:
         max_fit_points_per_track=arguments.sidereal_max_points_per_track,
         inverse_reprojection_tolerance_px=arguments.sidereal_inverse_tolerance_px,
     )
+
+
+def _add_orientation_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add absolute-orientation fitting parameters to ``parser``."""
+    parser.add_argument(
+        "--orientation-limiting-magnitude",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.limiting_magnitude,
+    )
+    parser.add_argument(
+        "--orientation-bootstrap-limiting-magnitude",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.bootstrap_limiting_magnitude,
+    )
+    parser.add_argument(
+        "--orientation-min-catalog-altitude-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.min_catalog_altitude_deg,
+    )
+    parser.add_argument(
+        "--orientation-min-track-points",
+        type=int,
+        default=_ORIENTATION_DEFAULTS.min_track_points,
+    )
+    parser.add_argument(
+        "--orientation-min-duration-minutes",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.min_track_duration_minutes,
+    )
+    parser.add_argument(
+        "--orientation-dedup-radius-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.deduplication_radius_deg,
+    )
+    parser.add_argument(
+        "--orientation-declination-tolerance-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.declination_tolerance_deg,
+    )
+    parser.add_argument(
+        "--orientation-consensus-bin-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.consensus_bin_deg,
+    )
+    parser.add_argument(
+        "--orientation-consensus-tolerance-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.consensus_tolerance_deg,
+    )
+    parser.add_argument(
+        "--orientation-match-radius-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.match_radius_deg,
+    )
+    parser.add_argument(
+        "--orientation-min-matches",
+        type=int,
+        default=_ORIENTATION_DEFAULTS.min_matches,
+    )
+    parser.add_argument(
+        "--orientation-max-anchors",
+        type=int,
+        default=_ORIENTATION_DEFAULTS.max_anchors,
+    )
+    parser.add_argument(
+        "--orientation-inverse-tolerance-px",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.inverse_reprojection_tolerance_px,
+    )
+    parser.add_argument(
+        "--orientation-track-validation-rms-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.track_validation_rms_deg,
+    )
+    parser.add_argument(
+        "--orientation-max-declination-robust-sigma-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.max_declination_robust_sigma_deg,
+    )
+    parser.add_argument(
+        "--orientation-max-declination-p95-deg",
+        type=float,
+        default=_ORIENTATION_DEFAULTS.max_declination_p95_deg,
+    )
+
+
+def _orientation_config(arguments: argparse.Namespace) -> OrientationFitConfig:
+    """Construct absolute-orientation settings from parsed arguments."""
+    return OrientationFitConfig(
+        limiting_magnitude=arguments.orientation_limiting_magnitude,
+        bootstrap_limiting_magnitude=(
+            arguments.orientation_bootstrap_limiting_magnitude
+        ),
+        min_catalog_altitude_deg=arguments.orientation_min_catalog_altitude_deg,
+        min_track_points=arguments.orientation_min_track_points,
+        min_track_duration_minutes=arguments.orientation_min_duration_minutes,
+        deduplication_radius_deg=arguments.orientation_dedup_radius_deg,
+        declination_tolerance_deg=(
+            arguments.orientation_declination_tolerance_deg
+        ),
+        consensus_bin_deg=arguments.orientation_consensus_bin_deg,
+        consensus_tolerance_deg=arguments.orientation_consensus_tolerance_deg,
+        match_radius_deg=arguments.orientation_match_radius_deg,
+        min_matches=arguments.orientation_min_matches,
+        max_anchors=arguments.orientation_max_anchors,
+        inverse_reprojection_tolerance_px=(
+            arguments.orientation_inverse_tolerance_px
+        ),
+        track_validation_rms_deg=arguments.orientation_track_validation_rms_deg,
+        max_declination_robust_sigma_deg=(
+            arguments.orientation_max_declination_robust_sigma_deg
+        ),
+        max_declination_p95_deg=arguments.orientation_max_declination_p95_deg,
+    )
+
 
 def _optional_nonnegative_int(value: str) -> int | None:
     """Parse a non-negative integer or the literal ``none``."""
@@ -456,12 +609,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             detection_config=_detection_config(arguments),
             tracking_config=_tracking_config(arguments),
             channel=arguments.channel,
+            reference_image_path=arguments.reference_image,
             output_path=output_path,
             output_dir=arguments.output_dir,
             overwrite_products=arguments.overwrite_products,
             grid_calibration_path=arguments.grid_calibration,
             sidereal_config=_sidereal_config(arguments),
             overwrite_solution=arguments.overwrite_solution,
+            solve_orientation=arguments.solve_orientation,
+            orientation_config=_orientation_config(arguments),
+            catalog_cache_path=arguments.catalog_cache,
+            overwrite_orientation=arguments.overwrite_orientation,
         )
         detection_state = (
             "cached" if summary.reused_detection_product else "computed"
@@ -473,6 +631,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "cached" if summary.reused_sidereal_product else "computed"
             )
             solution_note = f" | sidereal {solution_state}"
+        if summary.orientation_product_path is not None:
+            orientation_state = (
+                "cached" if summary.reused_orientation_product else "computed"
+            )
+            solution_note += f" | orientation {orientation_state}"
         print(
             f"Wrote {summary.output_path} | {summary.file_count} images | "
             f"{summary.detection_count} detections | {summary.track_count} tracks | "

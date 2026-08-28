@@ -17,6 +17,7 @@ from gonet_astrometry.adapters.gonet_wizard import GONetChannel
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.models.detection import DetectionClass
 from gonet_astrometry.models.track import TrackClass
+from gonet_astrometry.solving.sidereal import SIDEREAL_RATE_RAD_PER_SECOND
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.temporal import (
     sequence_timing_diagnostics,
@@ -155,13 +156,20 @@ def write_tracking_report_pdf(
         and artifacts.grid_calibration is not None
         else None
     )
+    orientation_figure = (
+        _build_orientation_diagnostic_figure(artifacts, image_data)
+        if artifacts.orientation_solution is not None
+        and artifacts.grid_calibration is not None
+        else None
+    )
     with PdfPages(destination) as pdf:
         pdf.savefig(figure)
         pdf.savefig(temporal_figure)
         if sidereal_figure is not None:
             pdf.savefig(sidereal_figure)
+        if orientation_figure is not None:
+            pdf.savefig(orientation_figure)
     return destination
-
 
 
 def _build_temporal_diagnostic_figure(
@@ -246,7 +254,6 @@ def _build_temporal_diagnostic_figure(
     )
     figure.subplots_adjust(left=0.08, right=0.97, top=0.90, bottom=0.13, hspace=0.35)
     return figure
-
 
 
 def _build_sidereal_diagnostic_figure(
@@ -405,6 +412,207 @@ def _build_sidereal_diagnostic_figure(
     )
     return figure
 
+
+def _build_orientation_diagnostic_figure(
+    artifacts: TrackingRunArtifacts,
+    image_data: NDArray[np.float64],
+) -> Figure:
+    """Return a report page for the catalog-assisted absolute camera attitude."""
+    solution = artifacts.orientation_solution
+    calibration = artifacts.grid_calibration
+    if solution is None or calibration is None:  # pragma: no cover - caller guards
+        raise ValueError("Orientation diagnostics require a solution and calibration")
+
+    figure = Figure(figsize=(12.0, 8.5))
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(2, 2)
+    image_axis = axes[0, 0]
+    lower, upper = _display_limits(image_data)
+    image_axis.imshow(
+        image_data,
+        cmap="gray",
+        origin="upper",
+        vmin=lower,
+        vmax=upper,
+        interpolation="nearest",
+    )
+
+    matched_pixels: list[tuple[float, float]] = []
+    report_timestamp = _reference_image_timestamp(artifacts)
+    signed_axis: NDArray[np.float64] | None = None
+    angle = 0.0
+    if artifacts.sidereal_solution is not None:
+        signed_axis = float(artifacts.sidereal_solution.rotation_sign) * np.asarray(
+            artifacts.sidereal_solution.axis_grid,
+            dtype=np.float64,
+        )
+        angle = SIDEREAL_RATE_RAD_PER_SECOND * (
+            report_timestamp - solution.reference_time.timestamp()
+        )
+    for match in solution.matches:
+        display_ray = (
+            _rotate_vector(match.ray_grid, signed_axis, angle)
+            if signed_axis is not None
+            else match.ray_grid
+        )
+        pixel = grid_pole_pixel(calibration, display_ray)
+        if pixel is not None:
+            matched_pixels.append((pixel[0] / 2.0, pixel[1] / 2.0))
+    if matched_pixels:
+        image_axis.scatter(
+            [item[0] for item in matched_pixels],
+            [item[1] for item in matched_pixels],
+            s=24,
+            marker="o",
+            facecolors="none",
+            edgecolors="#22c55e",
+            linewidths=0.9,
+            label=f"Catalog matches ({len(matched_pixels)})",
+        )
+
+    direction_styles = (
+        ("NCP", solution.ncp_grid, "*", "#facc15"),
+        (
+            "Zenith",
+            solution.local_direction_in_grid(
+                np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
+            ),
+            "P",
+            "#38bdf8",
+        ),
+        (
+            "North horizon",
+            solution.local_direction_in_grid(
+                np.asarray([0.0, 1.0, 0.0], dtype=np.float64)
+            ),
+            "^",
+            "#fb7185",
+        ),
+        (
+            "East horizon",
+            solution.local_direction_in_grid(
+                np.asarray([1.0, 0.0, 0.0], dtype=np.float64)
+            ),
+            ">",
+            "#a78bfa",
+        ),
+    )
+    for label, ray, marker, color in direction_styles:
+        pixel = grid_pole_pixel(calibration, ray)
+        if pixel is None:
+            continue
+        image_axis.scatter(
+            [pixel[0] / 2.0],
+            [pixel[1] / 2.0],
+            s=100,
+            marker=marker,
+            facecolors=color,
+            edgecolors="black",
+            linewidths=0.8,
+            label=label,
+            zorder=20,
+        )
+    image_axis.set_title("Absolute orientation in image coordinates")
+    image_axis.set_xlabel("Compact channel column")
+    image_axis.set_ylabel("Compact channel row")
+    image_axis.set_xlim(-0.5, image_data.shape[1] - 0.5)
+    image_axis.set_ylim(image_data.shape[0] - 0.5, -0.5)
+    image_axis.set_aspect("equal")
+    handles, labels = image_axis.get_legend_handles_labels()
+    if handles:
+        image_axis.legend(handles, labels, fontsize=6, frameon=False, loc="best")
+
+    residual_arcmin = np.asarray(
+        [60.0 * match.residual_deg for match in solution.matches],
+        dtype=np.float64,
+    )
+    axes[0, 1].hist(
+        residual_arcmin,
+        bins=min(30, max(8, int(np.sqrt(max(1, residual_arcmin.size))))),
+    )
+    axes[0, 1].set_title("Catalog-match residuals")
+    axes[0, 1].set_xlabel("Angular residual (arcmin)")
+    axes[0, 1].set_ylabel("Matches")
+
+    magnitudes = np.asarray(
+        [
+            np.nan if match.catalog_magnitude is None else match.catalog_magnitude
+            for match in solution.matches
+        ],
+        dtype=np.float64,
+    )
+    valid_magnitude = np.isfinite(magnitudes)
+    if np.any(valid_magnitude):
+        axes[1, 0].scatter(
+            magnitudes[valid_magnitude],
+            residual_arcmin[valid_magnitude],
+            s=18,
+            alpha=0.7,
+            linewidths=0,
+        )
+    axes[1, 0].set_title("Residual versus catalog magnitude")
+    axes[1, 0].set_xlabel("V magnitude")
+    axes[1, 0].set_ylabel("Angular residual (arcmin)")
+
+    matrix_axis = axes[1, 1]
+    matrix_axis.axis("off")
+    matrix_lines = [
+        "Grid -> ENU rotation matrix",
+        *[
+            "[" + "  ".join(f"{value:+.7f}" for value in row) + "]"
+            for row in solution.grid_to_enu
+        ],
+        "",
+        f"reference UTC: {solution.reference_time.isoformat()}",
+        (
+            f"site: lat {solution.location.latitude_deg:.6f} deg, "
+            f"lon {solution.location.longitude_deg:.6f} deg, "
+            f"elev {solution.location.elevation_m:.1f} m"
+        ),
+        f"pole-axis twist: {solution.twist_deg:.4f} deg",
+        (
+            f"optical axis: az {solution.optical_axis_azimuth_deg:.4f} deg, "
+            f"alt {solution.optical_axis_altitude_deg:.4f} deg"
+        ),
+        f"unique observed anchors: {solution.anchor_count}",
+        f"visible bright catalog stars: {solution.catalog_star_count}",
+        f"accepted catalog matches: {len(solution.matches)}",
+    ]
+    matrix_axis.text(
+        0.02,
+        0.98,
+        "\n".join(matrix_lines),
+        ha="left",
+        va="top",
+        fontsize=9,
+        family="monospace",
+        transform=matrix_axis.transAxes,
+    )
+
+    figure.suptitle("GONet Astrometry Absolute Orientation Diagnostics", fontsize=14)
+    figure.text(
+        0.01,
+        0.015,
+        (
+            f"catalog matches={len(solution.matches)} | fit RMS/median/P95 "
+            f"{60.0 * solution.fit_rms_deg:.3f}/"
+            f"{60.0 * solution.fit_median_deg:.3f}/"
+            f"{60.0 * solution.fit_p95_deg:.3f} arcmin | "
+            f"optical-axis az/alt "
+            f"{solution.optical_axis_azimuth_deg:.4f}/"
+            f"{solution.optical_axis_altitude_deg:.4f} deg"
+        ),
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        family="monospace",
+    )
+    figure.subplots_adjust(
+        left=0.07, right=0.97, top=0.90, bottom=0.13, hspace=0.34, wspace=0.26
+    )
+    return figure
+
+
 def _draw_detections(axis: object, artifacts: TrackingRunArtifacts) -> None:
     """Draw reference-image detections grouped by diagnostic class."""
     catalog = artifacts.reference_catalog
@@ -426,6 +634,31 @@ def _draw_detections(axis: object, artifacts: TrackingRunArtifacts) -> None:
             linewidths=0.8,
             label=f"{label} detections ({len(detections)})",
         )
+
+
+def _reference_image_timestamp(artifacts: TrackingRunArtifacts) -> float:
+    """Return the exposure midpoint timestamp of the report background image."""
+    reference = artifacts.reference_path.resolve()
+    for epoch in artifacts.sequence.epochs:
+        if epoch.source_path.resolve() == reference:
+            return epoch.exposure_midpoint.timestamp()
+    raise ValueError("Reference image is not part of the detection sequence")
+
+
+def _rotate_vector(
+    vector: NDArray[np.float64],
+    axis: NDArray[np.float64],
+    angle: float,
+) -> NDArray[np.float64]:
+    """Rotate ``vector`` about ``axis`` by ``angle`` radians."""
+    cosine = float(np.cos(angle))
+    sine = float(np.sin(angle))
+    return np.asarray(
+        vector * cosine
+        + np.cross(axis, vector) * sine
+        + axis * float(np.dot(vector, axis)) * (1.0 - cosine),
+        dtype=np.float64,
+    )
 
 
 def _draw_tracks(axis: object, artifacts: TrackingRunArtifacts) -> None:

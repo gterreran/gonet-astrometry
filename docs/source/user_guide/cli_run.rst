@@ -19,6 +19,17 @@ Folders are searched recursively by default. Use ``--no-recursive`` to inspect
 only their top level. The report background defaults to the compact ``green1``
 channel; ``--channel`` also accepts ``blue``, ``green2``, and ``red``.
 
+The static report background defaults to the original reference image recorded
+in ``detections.npz``.  Any retained sequence image can instead be selected
+without invalidating cached scientific products::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --reference-image /path/to/night/frame-350.jpg
+
+``--reference-image`` affects PDF rendering only.  Detection, tracking, sidereal,
+and absolute-orientation products remain reusable.
+
 Detection settings
 ------------------
 
@@ -88,7 +99,9 @@ default layout is::
    gonet_astrometry_output/
        detections.npz
        tracks.npz
-       sidereal_rotation.npz    # when --grid-calibration is supplied
+       sidereal_rotation.npz      # when --grid-calibration is supplied
+       bright_star_catalog.npz     # after the first orientation solve
+       absolute_orientation.npz    # when --solve-orientation is supplied
        tracking.pdf
 
 Use ``--output-dir`` to choose a different directory. ``--output`` may still
@@ -197,3 +210,70 @@ sidereal fit. It overlays consistent/rejected/insufficient tracks, marks the
 fitted apparent rotation pole when it lies inside Grid coverage, plots the
 per-track de-rotated residual distribution and residual versus track duration,
 and records the Grid-frame pole vector and global RMS/median/P95 residuals.
+
+Absolute camera orientation
+---------------------------
+
+The common sidereal rotation axis fixes only two of the camera attitude's three
+rotational degrees of freedom.  One exact rotation about the celestial pole
+remains unconstrained until at least one absolute celestial direction is
+identified.  GONet Astrometry resolves that remaining twist by matching
+sidereal-consistent, de-rotated stellar tracks to a bright-star catalog.
+
+Enable this stage together with a portable Grid calibration::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --output-dir gonet_astrometry_output \
+       --grid-calibration /path/to/camera_calibration.npz \
+       --solve-orientation
+
+The first run uses the VizieR Bright Star Catalogue when no local cache exists
+and writes a portable ``bright_star_catalog.npz`` beside the other workflow
+products.  Later runs reuse that cache and do not require another catalog
+query.  A different cache location can be supplied with ``--catalog-cache``.
+Fetching a missing cache requires the optional ``catalog`` dependency (included
+in the development extra).
+
+The solver first de-rotates every sufficiently long sidereal-consistent track
+to one common reference epoch.  Fragmented tracklets that collapse to the same
+stellar direction are de-duplicated.  Before catalog matching, every valid
+point in each candidate track is also assigned an independent declination from
+its angle to the fitted NCP.  Tracks with unstable declination are excluded from
+the orientation anchors; both a robust scatter limit and a P95 absolute
+deviation limit are used so that a few bad associations cannot hide behind a
+small MAD.
+
+The fitted sidereal axis identifies each surviving anchor's declination,
+reducing catalog matching to one unknown angular twist about the North
+Celestial Pole.  The default declination gate is deliberately tight because the
+real multi-image tracks constrain declination at the arcminute level.  Rather
+than accumulating independent observed/catalog phase pairs, the solver scans
+the complete 0--360 degree twist range and scores how many anchors can be
+registered simultaneously to a sparse bright-star subset.  The strongest
+separated candidate twists are refined, checked with a one-to-one assignment,
+then expanded to the full configured catalog for the final attitude fit.
+
+Catalog directions are transformed to the local geometric horizon with Astropy.
+The local frame is right-handed ENU: ``+x`` east, ``+y`` north, and ``+z`` up.
+The resulting matrix obeys::
+
+   ray_enu = grid_to_enu @ ray_grid
+
+The saved ``absolute_orientation.npz`` product contains that full rotation
+matrix, the reference epoch and observing location, the NCP in both coordinate
+frames, the fitted pole-axis twist, catalog matches, and residual statistics.
+It is pickle-free and provenance-checked against the sidereal product, catalog
+cache, and orientation settings.  Use ``--overwrite-orientation`` to recompute
+only this stage while preserving detections, tracks, and the sidereal solution.
+
+The default catalog matching excludes stars below 10 degrees geometric altitude
+to reduce sensitivity to unmodeled atmospheric refraction.  The current
+bright-star cache uses catalog positions as stored and does not yet propagate
+individual stellar proper motions; this is appropriate for the initial coarse
+attitude solve but can be upgraded later for higher-precision catalog fitting.
+
+With ``--solve-orientation`` the PDF gains a fourth page showing matched stellar
+anchors, the recovered NCP/zenith/north/east directions in image coordinates,
+catalog-match residuals, the Grid-to-ENU matrix, the optical-axis azimuth and
+altitude, and orientation-fit summary statistics.

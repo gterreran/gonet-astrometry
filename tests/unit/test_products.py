@@ -274,3 +274,28 @@ def test_sidereal_product_id_changes_when_grid_artifact_changes(tmp_path: Path) 
     grid_path.write_bytes(b"second calibration")
     second = sidereal_product_id("tracks-id", grid_path, config)
     assert first != second
+
+
+def test_orientation_product_id_changes_when_catalog_cache_changes(
+    tmp_path: Path,
+) -> None:
+    from gonet_astrometry.products import orientation_product_id
+    from gonet_astrometry.solving.orientation import OrientationFitConfig
+
+    catalog_path = tmp_path / "bright_star_catalog.npz"
+    catalog_path.write_bytes(b"first catalog")
+    config = OrientationFitConfig()
+    first = orientation_product_id("sidereal-id", catalog_path, config)
+    catalog_path.write_bytes(b"updated catalog")
+    second = orientation_product_id("sidereal-id", catalog_path, config)
+
+    assert first != second
+
+
+def test_product_store_exposes_orientation_paths(tmp_path: Path) -> None:
+    from gonet_astrometry.products import ProductStore
+
+    store = ProductStore(tmp_path)
+
+    assert store.bright_star_catalog_path == tmp_path / "bright_star_catalog.npz"
+    assert store.orientation_path == tmp_path / "absolute_orientation.npz"

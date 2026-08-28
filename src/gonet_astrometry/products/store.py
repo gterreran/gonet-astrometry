@@ -33,6 +33,16 @@ class ProductStore:
         """Return the portable Grid-calibrated sidereal solution path."""
         return self.output_dir / "sidereal_rotation.npz"
 
+    @property
+    def bright_star_catalog_path(self) -> Path:
+        """Return the reusable local Bright Star Catalogue cache path."""
+        return self.output_dir / "bright_star_catalog.npz"
+
+    @property
+    def orientation_path(self) -> Path:
+        """Return the portable absolute camera-orientation product path."""
+        return self.output_dir / "absolute_orientation.npz"
+
     def ensure(self) -> None:
         """Create the output directory when necessary."""
         self.output_dir.mkdir(parents=True, exist_ok=True)

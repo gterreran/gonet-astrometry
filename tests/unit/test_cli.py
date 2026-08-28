@@ -128,6 +128,8 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "4",
             "--channel",
             "red",
+            "--reference-image",
+            "night/frame-350.jpg",
             "--output-dir",
             "products",
             "--output",
@@ -140,6 +142,22 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "7",
             "--sidereal-consistent-rms-deg",
             "0.2",
+            "--solve-orientation",
+            "--catalog-cache",
+            "stars.npz",
+            "--overwrite-orientation",
+            "--orientation-limiting-magnitude",
+            "5.8",
+            "--orientation-bootstrap-limiting-magnitude",
+            "4.6",
+            "--orientation-min-matches",
+            "12",
+            "--orientation-track-validation-rms-deg",
+            "0.25",
+            "--orientation-max-declination-robust-sigma-deg",
+            "0.05",
+            "--orientation-max-declination-p95-deg",
+            "0.12",
         ]
     )
 
@@ -156,6 +174,7 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.max_prediction_gap_scale == 2.5
     assert arguments.min_track_length == 4
     assert arguments.channel == "red"
+    assert arguments.reference_image == Path("night/frame-350.jpg")
     assert arguments.output == Path("result.pdf")
     assert arguments.output_dir == Path("products")
     assert arguments.overwrite_products is True
@@ -163,6 +182,15 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.overwrite_solution is True
     assert arguments.sidereal_min_track_points == 7
     assert arguments.sidereal_consistent_rms_deg == 0.2
+    assert arguments.solve_orientation is True
+    assert arguments.catalog_cache == Path("stars.npz")
+    assert arguments.overwrite_orientation is True
+    assert arguments.orientation_limiting_magnitude == 5.8
+    assert arguments.orientation_bootstrap_limiting_magnitude == 4.6
+    assert arguments.orientation_min_matches == 12
+    assert arguments.orientation_track_validation_rms_deg == 0.25
+    assert arguments.orientation_max_declination_robust_sigma_deg == 0.05
+    assert arguments.orientation_max_declination_p95_deg == 0.12
 
 
 def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
@@ -185,6 +213,8 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
             reused_tracking_product=False,
             sidereal_product_path=None,
             reused_sidereal_product=False,
+            orientation_product_path=None,
+            reused_orientation_product=False,
         )
 
     module.run_cli_workflow = fake_run_cli_workflow  # type: ignore[attr-defined]
@@ -210,8 +240,13 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["tracking_config"].prediction_tolerance_px == 8.0
     assert calls[0]["output_dir"] == Path("gonet_astrometry_output")
     assert calls[0]["output_path"] == Path("gonet_astrometry_output/tracking.pdf")
+    assert calls[0]["reference_image_path"] is None
     assert calls[0]["overwrite_products"] is False
     assert calls[0]["grid_calibration_path"] is None
     assert calls[0]["overwrite_solution"] is False
     assert calls[0]["sidereal_config"].min_track_points == 5
+    assert calls[0]["solve_orientation"] is False
+    assert calls[0]["catalog_cache_path"] is None
+    assert calls[0]["overwrite_orientation"] is False
+    assert calls[0]["orientation_config"].min_matches == 8
     assert "300 detections" in capsys.readouterr().out

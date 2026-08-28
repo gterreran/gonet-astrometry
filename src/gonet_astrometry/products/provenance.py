@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.solving.orientation import OrientationFitConfig
 from gonet_astrometry.solving.sidereal import SiderealFitConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 
@@ -20,6 +21,9 @@ TRACKING_PIPELINE_REVISION = 1
 
 SIDEREAL_PIPELINE_REVISION = 2
 """Manual cache revision for Grid-calibrated sidereal-fitting semantics."""
+
+ORIENTATION_PIPELINE_REVISION = 4
+"""Manual cache revision for catalog-assisted absolute-orientation semantics."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +115,6 @@ def tracking_product_id(
     return _digest(payload)
 
 
-
 def sidereal_product_id(
     tracking_id: str,
     grid_calibration_path: Path,
@@ -128,6 +131,25 @@ def sidereal_product_id(
         "fit_config": asdict(config),
     }
     return _digest(payload)
+
+
+def orientation_product_id(
+    sidereal_id: str,
+    catalog_path: Path,
+    config: OrientationFitConfig,
+) -> str:
+    """Return the semantic identity of an absolute camera-orientation product."""
+    catalog = fingerprint_inputs((catalog_path,))[0]
+    payload = {
+        "kind": "absolute-orientation",
+        "schema_version": 1,
+        "pipeline_revision": ORIENTATION_PIPELINE_REVISION,
+        "sidereal_product_id": sidereal_id,
+        "catalog": catalog.as_mapping(),
+        "fit_config": asdict(config),
+    }
+    return _digest(payload)
+
 
 def _digest(payload: dict[str, Any]) -> str:
     """Return a stable SHA-256 digest for a JSON-compatible mapping."""

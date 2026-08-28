@@ -11,6 +11,8 @@ from gonet_astrometry.models.frame import ImageFrame, ImageMetadata, ObserverLoc
 from gonet_astrometry.runner import (
     DetectionRunArtifacts,
     RunSummary,
+    _prepare_report_reference,
+    _resolve_report_reference_path,
     execute_tracking_run,
     preflight_tracking_locations,
     run_cli_workflow,
@@ -120,6 +122,78 @@ def test_execute_tracking_run_requires_two_images(tmp_path: Path) -> None:
             DetectionConfig(),
             TrackingConfig(),
         )
+
+
+def test_resolve_report_reference_path_accepts_retained_epoch(tmp_path: Path) -> None:
+    paths = tuple((tmp_path / f"frame-{index}.jpg").resolve() for index in range(2))
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = [DetectionCatalog(str(path), (), "synthetic") for path in paths]
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=False)
+        ]
+    )
+
+    selected = _resolve_report_reference_path(sequence, paths[0], paths[1])
+
+    assert selected == paths[1]
+
+
+def test_resolve_report_reference_path_rejects_unretained_image(tmp_path: Path) -> None:
+    paths = tuple((tmp_path / f"frame-{index}.jpg").resolve() for index in range(2))
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = [DetectionCatalog(str(path), (), "synthetic") for path in paths]
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=False)
+        ]
+    )
+
+    with pytest.raises(ValueError, match="not part of the retained detection sequence"):
+        _resolve_report_reference_path(sequence, paths[0], tmp_path / "other.jpg")
+
+
+def test_prepare_report_reference_uses_selected_catalog(
+    tmp_path: Path, monkeypatch
+) -> None:
+    paths = tuple((tmp_path / f"frame-{index}.jpg").resolve() for index in range(2))
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = [
+        DetectionCatalog(
+            str(path),
+            (Detection(index, 5.0, 6.0, 10.0, 10.0, 0.5, 0.5),),
+            "synthetic",
+        )
+        for index, path in enumerate(paths)
+    ]
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=False)
+        ]
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.prepare_bayer_detection_image",
+        lambda frame, config: _prepared(frame.shape),
+    )
+
+    prepared, catalog = _prepare_report_reference(
+        sequence,
+        paths[1],
+        DetectionConfig(),
+        frame_loader=lambda path: frames[paths.index(path)],
+    )
+
+    assert prepared.data.shape == frames[1].shape
+    assert catalog is catalogs[1]
 
 
 def test_run_cli_workflow_discovers_writes_and_summarizes(

@@ -10,11 +10,18 @@ from gonet_astrometry.products.errors import (
     ProductFormatError,
     ProductMismatchError,
 )
+from gonet_astrometry.products.orientation import (
+    OrientationProduct,
+    load_orientation_product,
+    save_orientation_product,
+)
 from gonet_astrometry.products.provenance import (
     DETECTION_PIPELINE_REVISION,
+    ORIENTATION_PIPELINE_REVISION,
     SIDEREAL_PIPELINE_REVISION,
     TRACKING_PIPELINE_REVISION,
     detection_product_id,
+    orientation_product_id,
     sidereal_product_id,
     tracking_product_id,
 )
@@ -33,6 +40,8 @@ from gonet_astrometry.products.tracks import (
 __all__ = [
     "DETECTION_PIPELINE_REVISION",
     "DetectionProduct",
+    "ORIENTATION_PIPELINE_REVISION",
+    "OrientationProduct",
     "ProductError",
     "ProductFormatError",
     "ProductMismatchError",
@@ -43,11 +52,14 @@ __all__ = [
     "TrackingProduct",
     "detection_product_id",
     "load_detection_product",
+    "load_orientation_product",
     "load_sidereal_product",
     "load_tracking_product",
     "save_detection_product",
+    "save_orientation_product",
     "save_sidereal_product",
     "save_tracking_product",
+    "orientation_product_id",
     "sidereal_product_id",
     "tracking_product_id",
 ]

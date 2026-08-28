@@ -39,6 +39,9 @@ detection = [
   "photutils>=1.9",
   "sep>=1.2",
 ]
+catalog = [
+  "astroquery>=0.4.7",
+]
 docs = [
   "furo>=2024.1.29",
   "numpydoc>=1.6",
@@ -46,6 +49,7 @@ docs = [
   "sphinx-autodoc-typehints>=2",
 ]
 dev = [
+  "astroquery>=0.4.7",
   "black>=24",
   "coverage[toml]>=7",
   "dash>=2.18",
@@ -149,6 +153,7 @@ warn_unreachable = true
 [[tool.mypy.overrides]]
 module = [
   "astropy.*",
+  "astroquery.*",
   "matplotlib.*",
   "dash.*",
   "GONet_Wizard.*",

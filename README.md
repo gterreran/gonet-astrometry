@@ -124,6 +124,22 @@ gonet-astrometry run /path/to/night \
     --grid-calibration /path/to/camera_calibration.npz
 ```
 
+The PDF background normally uses the detection product's original reference
+image. Choose any other retained epoch without recomputing scientific products
+with ``--reference-image /path/to/frame.jpg``. The selected file only changes
+report rendering; detections, tracks, sidereal rotation, and absolute orientation
+products remain reusable.
+
+The fitted rotation pole still leaves one exact camera-attitude twist around the
+celestial axis. Add ``--solve-orientation`` to resolve that final degree of
+freedom by matching de-rotated sidereal-consistent tracks to a cached bright-star
+catalog. The resulting portable ``absolute_orientation.npz`` stores the complete
+Grid-to-local-ENU rotation matrix and the PDF gains a fourth orientation page.
+The first run creates ``bright_star_catalog.npz`` in the output directory; later
+runs reuse it. Orientation anchors are selected for stable declination across
+their full tracks, and the remaining twist is found with a global 0--360 degree
+pattern-registration search rather than independent pairwise star matches.
+
 Run the validation commands documented in
 `docs/source/developer_guide/contributing.rst` before opening a pull request.
 

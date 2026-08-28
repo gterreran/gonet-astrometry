@@ -165,3 +165,82 @@ def test_write_tracking_report_pdf_adds_sidereal_page(tmp_path: Path) -> None:
     )
 
     assert output.read_bytes().startswith(b"%PDF")
+
+
+def test_write_tracking_report_pdf_adds_orientation_page(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from gonet_astrometry.adapters.grid_calibration import PortableGridTransform
+    from gonet_astrometry.geometry.horizon import ncp_enu_vector
+    from gonet_astrometry.models.grid import GridCalibration
+    from gonet_astrometry.solving.orientation import (
+        AbsoluteOrientationSolution,
+        OrientationFitConfig,
+        OrientationMatch,
+    )
+
+    class Evaluator:
+        sensor_width_px = 20
+        sensor_height_px = 20
+        image_coordinate_convention = (
+            "x=column,y=row;origin=upper-left;+x=right;+y=down;"
+            "pixel-centers-at-integer-coordinates"
+        )
+        calibrated_angular_range_deg = (0.0, 170.0)
+
+        def pixel_to_angle(self, x, y, **kwargs):
+            del kwargs
+            return np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+
+        def angle_to_pixel(self, r_deg, theta_deg):
+            return np.asarray(r_deg, dtype=float), np.asarray(theta_deg, dtype=float)
+
+    artifacts = _artifacts(tmp_path)
+    location = artifacts.sequence.epochs[0].location
+    ncp = ncp_enu_vector(location.latitude_deg)
+    solution = AbsoluteOrientationSolution(
+        grid_to_enu=np.eye(3, dtype=float),
+        reference_time=artifacts.sequence.epochs[1].exposure_midpoint,
+        location=location,
+        ncp_grid=ncp,
+        ncp_enu=ncp,
+        twist_deg=12.0,
+        fit_rms_deg=0.02,
+        fit_median_deg=0.01,
+        fit_p95_deg=0.03,
+        anchor_count=10,
+        catalog_star_count=20,
+        matches=(
+            OrientationMatch(
+                track_identifier=artifacts.tracking_result.tracks[0].identifier,
+                catalog_identifier="HR 1",
+                residual_deg=0.01,
+                observed_declination_deg=20.0,
+                catalog_declination_deg=20.0,
+                catalog_magnitude=2.5,
+                ray_grid=np.asarray([0.0, 0.0, 1.0]),
+            ),
+        ),
+    )
+    calibration = GridCalibration(
+        transform=PortableGridTransform(Evaluator()),
+        image_shape=(20, 20),
+        coordinate_convention=Evaluator.image_coordinate_convention,
+    )
+    artifacts = replace(
+        artifacts,
+        grid_calibration=calibration,
+        orientation_solution=solution,
+        orientation_fit_config=OrientationFitConfig(),
+    )
+
+    output = write_tracking_report_pdf(
+        tmp_path / "orientation.pdf",
+        image_data=np.arange(100, dtype=float).reshape(10, 10),
+        channel="green1",
+        artifacts=artifacts,
+        detection_config=DetectionConfig(),
+        tracking_config=TrackingConfig(min_track_length=3),
+    )
+
+    assert output.read_bytes().startswith(b"%PDF")

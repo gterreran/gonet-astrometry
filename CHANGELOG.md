@@ -7,8 +7,24 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Replace the permissive pairwise orientation-twist bootstrap with a global
+  one-dimensional star-pattern registration.  Orientation anchors are now
+  filtered by per-track declination stability, catalog candidates use a much
+  tighter declination gate, and the full 0--360 degree twist range is scored
+  before one-to-one catalog refinement.
+- Skip VizieR Bright Star Catalogue rows with missing or invalid identifiers or
+  coordinates before constructing the vectorized Astropy ``SkyCoord`` object.
+
 ### Added
 
+- CLI ``--reference-image`` selection for choosing any retained epoch as the PDF background without invalidating or recomputing scientific products.
+- Catalog-assisted absolute camera orientation that resolves the final twist
+  about the fitted celestial pole, caches the Bright Star Catalogue in a
+  portable no-pickle artifact, writes ``absolute_orientation.npz``, exposes
+  independent orientation cache controls, and adds a fourth PDF diagnostics
+  page with matched anchors and the Grid-to-ENU attitude.
 - Optional portable Grid Calibration integration with full-model pixel-to-ray
   inversion, robust shared sidereal-axis fitting at the fixed sidereal rate,
   per-track spherical consistency diagnostics, a reusable no-pickle

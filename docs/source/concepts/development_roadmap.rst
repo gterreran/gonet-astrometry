@@ -19,22 +19,23 @@ Milestone 2: native Bayer detection
 * model channel-dependent amplitudes around a common centroid;
 * produce detection overlays and quality diagnostics.
 
-Milestone 3: Grid-assisted absolute solution
----------------------------------------------
-
-* transform a bright-star catalog to local apparent coordinates;
-* bootstrap camera attitude from the Grid calibration;
-* match detections and generate residual maps;
-* validate single-frame solution limits.
-
-Milestone 4: temporal tracking
-------------------------------
+Milestone 3: temporal tracking and sidereal axis
+------------------------------------------------
 
 * bootstrap conservative image-plane tracklets across timestamps;
-* convert associated detections to camera rays;
+* convert associated detections to Grid-frame camera rays;
 * estimate the common celestial rotation axis in ray space;
 * reject static lights, aircraft, clouds, and inconsistent transients;
-* diagnose timestamp and camera-motion errors.
+* diagnose timestamp, cadence, and camera-motion errors.
+
+Milestone 4: absolute camera orientation
+----------------------------------------
+
+* de-rotate sidereal-consistent tracks to one common epoch;
+* match the resulting stellar anchors to a bright-star catalog;
+* resolve the final attitude twist about the celestial pole;
+* recover and validate the complete Grid-to-local-horizon rotation matrix;
+* generate catalog-match and local-direction diagnostics.
 
 Milestone 5: joint nightly calibration
 ---------------------------------------
@@ -42,4 +43,4 @@ Milestone 5: joint nightly calibration
 * fit all matched frames with robust losses;
 * refine attitude and geometric calibration;
 * quantify uncertainty and parameter degeneracies;
-* export a versioned calibration with provenance.
+* export a versioned astrometric calibration with provenance.
