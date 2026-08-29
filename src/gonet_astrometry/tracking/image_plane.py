@@ -106,9 +106,7 @@ class ImagePlaneTracker:
 
         for epoch_index, epoch in enumerate(sequence.epochs[1:], start=1):
             active = [
-                state
-                for state in states
-                if self._is_active(state, epoch_index, epoch)
+                state for state in states if self._is_active(state, epoch_index, epoch)
             ]
             assignments = self._assign_epoch(active, epoch_index, epoch)
             matched_detections: set[int] = set()

@@ -5,8 +5,8 @@ import pytest
 
 from gonet_astrometry.models.detection import Detection, DetectionCatalog
 from gonet_astrometry.models.frame import ObserverLocation
-from gonet_astrometry.tracking.image_plane import ImagePlaneTracker
 from gonet_astrometry.tracking.config import TrackingConfig
+from gonet_astrometry.tracking.image_plane import ImagePlaneTracker
 from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
 from gonet_astrometry.tracking.temporal import (
     sequence_timing_diagnostics,
@@ -71,3 +71,15 @@ def test_empty_track_population_has_zero_summary() -> None:
         TrackingConfig(max_speed_px_per_minute=1.0, min_track_length=2)
     ).track(sequence)
     assert track_population_diagnostics(result).track_count == 0
+
+
+def test_sequence_timing_diagnostics_support_single_epoch() -> None:
+    sequence = DetectionSequence.from_epochs([_epoch(0, 0.0, 10.0)])
+    diagnostics = sequence_timing_diagnostics(sequence)
+
+    assert diagnostics.epoch_count == 1
+    assert diagnostics.duration_s == pytest.approx(0.0)
+    assert diagnostics.min_interval_s == pytest.approx(0.0)
+    assert diagnostics.median_interval_s == pytest.approx(0.0)
+    assert diagnostics.p90_interval_s == pytest.approx(0.0)
+    assert diagnostics.max_interval_s == pytest.approx(0.0)

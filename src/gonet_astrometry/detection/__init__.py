@@ -12,6 +12,13 @@ from gonet_astrometry.detection.errors import (
     DetectionInputError,
     SourceDetectionError,
 )
+from gonet_astrometry.detection.field_mask import (
+    FieldMask,
+    FieldMaskError,
+    circular_exclusion_mask,
+    load_field_mask,
+    save_field_mask,
+)
 from gonet_astrometry.detection.photutils_backends import (
     DAOStarFinderDetector,
     PhotutilsSegmentationDetector,
@@ -40,6 +47,8 @@ __all__ = [
     "DetectionInputError",
     "LocalSourceDiagnostics",
     "DetectionTiming",
+    "FieldMask",
+    "FieldMaskError",
     "DetectorIdentifier",
     "DetectorSpec",
     "PhotutilsSegmentationDetector",
@@ -48,10 +57,13 @@ __all__ = [
     "ScipyPeakDetector",
     "SourceDetectionError",
     "SourceDetector",
+    "circular_exclusion_mask",
     "create_detector",
     "detector_options",
     "enrich_detection_catalog",
     "estimate_provisional_field_mask",
+    "load_field_mask",
     "measure_local_source",
     "prepare_bayer_detection_image",
+    "save_field_mask",
 ]

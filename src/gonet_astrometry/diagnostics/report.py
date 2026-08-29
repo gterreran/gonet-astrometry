@@ -12,8 +12,8 @@ from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
-from gonet_astrometry.adapters.grid_calibration import grid_pole_pixel
 from gonet_astrometry.adapters.gonet_wizard import GONetChannel
+from gonet_astrometry.adapters.grid_calibration import grid_pole_pixel
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.models.detection import DetectionClass
 from gonet_astrometry.models.track import TrackClass
@@ -214,9 +214,7 @@ def _build_temporal_diagnostic_figure(
     axes[0, 1].set_ylabel("Count")
 
     if durations.size:
-        axes[1, 0].hist(
-            durations, bins=min(60, max(10, int(np.sqrt(durations.size))))
-        )
+        axes[1, 0].hist(durations, bins=min(60, max(10, int(np.sqrt(durations.size)))))
     axes[1, 0].set_title("Track temporal spans")
     axes[1, 0].set_xlabel("Duration (min)")
     axes[1, 0].set_ylabel("Count")
@@ -279,9 +277,7 @@ def _build_sidereal_diagnostic_figure(
         vmax=upper,
         interpolation="nearest",
     )
-    diagnostics = {
-        item.track_identifier: item for item in solution.track_diagnostics
-    }
+    diagnostics = {item.track_identifier: item for item in solution.track_diagnostics}
     for class_name, (label, color) in _SIDEREAL_TRACK_STYLES.items():
         tracks = [
             track
@@ -324,9 +320,7 @@ def _build_sidereal_diagnostic_figure(
         image_axis.legend(handles, labels, fontsize=6, frameon=False, loc="best")
 
     sufficient = [
-        item
-        for item in solution.track_diagnostics
-        if item.rms_residual_deg is not None
+        item for item in solution.track_diagnostics if item.rms_residual_deg is not None
     ]
     rms_arcmin = np.asarray(
         [60.0 * item.rms_residual_deg for item in sufficient],
@@ -759,6 +753,40 @@ def _parameter_summary(
     tracking: TrackingConfig,
 ) -> str:
     """Return the compact parameter annotation printed below the figure."""
+    spherical = artifacts.spherical_tracking_config
+    multichannel = artifacts.multichannel_detection_config
+    merge = artifacts.stellar_merge_config
+    if spherical is not None and multichannel is not None and merge is not None:
+        edge_setting = (
+            f"auto:{detection.footprint_threshold_fraction:g}"
+            if detection.use_provisional_field_mask
+            else "off"
+        )
+        grid_search = (
+            "none"
+            if multichannel.grid_search_radius_deg is None
+            else f"{multichannel.grid_search_radius_deg:g}deg"
+        )
+        grid_accept = (
+            "none"
+            if multichannel.grid_acceptance_radius_deg is None
+            else f"{multichannel.grid_acceptance_radius_deg:g}deg"
+        )
+        return (
+            f"images={len(artifacts.files)}  "
+            f"threshold={detection.threshold_sigma:g}sigma  "
+            f"edge={edge_setting}  "
+            f"edge_keep={multichannel.field_edge_keep_margin_px:g}px  "
+            f"grid_search={grid_search}  grid_accept={grid_accept}  "
+            f"channel_match={multichannel.channel_match_radius_px:g}px  "
+            f"initial_speed={spherical.max_initial_speed_deg_per_minute:g}deg/min  "
+            f"prediction_tol={spherical.prediction_tolerance_arcmin:g}arcmin  "
+            f"max_gap={spherical.max_gap_minutes:g}min  "
+            f"min_track={spherical.min_track_length}  "
+            f"merge={60.0 * merge.merge_radius_deg:g}arcmin  "
+            f"merged_rms={60.0 * merge.merged_rms_deg:g}arcmin"
+        )
+
     return (
         f"images={len(artifacts.files)}  threshold={detection.threshold_sigma:g}sigma  "
         f"fwhm={detection.fwhm_px:g}px  min_pixels={detection.min_pixels}  "

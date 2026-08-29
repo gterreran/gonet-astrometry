@@ -548,7 +548,7 @@ def test_run_cli_workflow_reuses_products_before_expensive_steps(
     assert tracking_calls == [changed_tracking]
 
 
-def test_run_cli_workflow_reuses_sidereal_solution_independently(
+def test_run_cli_workflow_uses_and_reuses_grid_stellar_pipeline(
     tmp_path: Path, monkeypatch
 ) -> None:
     from gonet_astrometry.models.grid import GridCalibration
@@ -557,8 +557,10 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
         SiderealRotationSolution,
         SiderealTrackDiagnostics,
     )
+    from gonet_astrometry.solving.stellar_tracks import StellarTrackMergeResult
     from gonet_astrometry.tracking.image_plane import ImagePlaneTracker
     from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+    from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
 
     paths = tuple((tmp_path / f"sidereal-{index}.jpg").resolve() for index in range(2))
     for index, path in enumerate(paths):
@@ -572,7 +574,7 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
         DetectionCatalog(
             str(path),
             (Detection(index, 5.0 + index, 6.0, 10.0, 10.0, 0.5, 0.5),),
-            "sep",
+            "sep-independent-channels",
         )
         for index, path in enumerate(paths)
     )
@@ -589,31 +591,11 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
     tracking = ImagePlaneTracker(tracking_config).track(sequence)
     detected = DetectionRunArtifacts(
         files=paths,
-        algorithm="sep",
+        algorithm="sep-independent-channels",
         sequence=sequence,
         reference_path=paths[0],
         reference_catalog=catalogs[0],
         reference_prepared=prepared,
-    )
-    monkeypatch.setattr(
-        "gonet_astrometry.runner.execute_detection_run",
-        lambda *args, **kwargs: detected,
-    )
-    monkeypatch.setattr(
-        "gonet_astrometry.runner._track_sequence",
-        lambda sequence, config: tracking,
-    )
-    monkeypatch.setattr(
-        "gonet_astrometry.runner.load_gonet_file_raw",
-        lambda path, parse_metadata=False: object(),
-    )
-    monkeypatch.setattr(
-        "gonet_astrometry.runner.get_raw_channel",
-        lambda raw, channel: np.zeros((10, 10), dtype=float),
-    )
-    monkeypatch.setattr(
-        "gonet_astrometry.runner.write_tracking_report_pdf",
-        lambda path, **kwargs: path.resolve(),
     )
 
     class Transform:
@@ -630,6 +612,46 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
         "gonet_astrometry.runner.load_grid_calibration",
         lambda path: calibration,
     )
+
+    class FakeMultichannelDetector:
+        name = "sep-independent-channels"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def prepare_report_image(self, frame):
+            del frame
+            return prepared
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.IndependentChannelSEPDetector",
+        FakeMultichannelDetector,
+    )
+
+    detection_calls: list[int] = []
+
+    def fake_detection(*args, **kwargs):
+        del args, kwargs
+        detection_calls.append(1)
+        return detected
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.execute_multichannel_detection_run",
+        fake_detection,
+    )
+
+    temporal_calls: list[int] = []
+
+    def fake_temporal(sequence_arg, grid, config):
+        del sequence_arg, grid, config
+        temporal_calls.append(1)
+        return tracking
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._track_spherical_sequence",
+        fake_temporal,
+    )
+
     track_identifier = tracking.tracks[0].identifier
     solution = SiderealRotationSolution(
         axis_grid=np.asarray([0.0, 0.6, 0.8]),
@@ -652,19 +674,48 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
             ),
         ),
     )
-    fit_calls: list[int] = []
 
-    def fake_fit(self, tracking_result, grid):
-        del self, tracking_result, grid
-        fit_calls.append(1)
-        return solution
+    merge_calls: list[int] = []
 
-    monkeypatch.setattr("gonet_astrometry.runner.SiderealAxisFitter.fit", fake_fit)
+    class FakeMerger:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def fit_and_merge(self, tracking_result, grid):
+            del grid
+            merge_calls.append(1)
+            return StellarTrackMergeResult(
+                tracking=tracking_result,
+                source_fragment_ids=((track_identifier,),),
+                reference_time=sequence.epochs[0].exposure_midpoint,
+                preliminary_solution=solution,
+                final_solution=solution,
+            )
+
+    monkeypatch.setattr("gonet_astrometry.runner.SiderealTrackMerger", FakeMerger)
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.SiderealAxisFitter.fit_candidate_count",
+        lambda self, tracking_result, grid: 3,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_file_raw",
+        lambda path, parse_metadata=False: object(),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.get_raw_channel",
+        lambda raw, channel: np.zeros((10, 10), dtype=float),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.write_tracking_report_pdf",
+        lambda path, **kwargs: path.resolve(),
+    )
+
     product_dir = tmp_path / "products"
     fit_config = SiderealFitConfig(
         min_track_points=3,
         min_track_duration_minutes=1.0,
     )
+    spherical_config = SphericalTrackingConfig(min_track_length=2)
 
     first = run_cli_workflow(
         [tmp_path],
@@ -676,19 +727,31 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
         output_path=tmp_path / "first.pdf",
         output_dir=product_dir,
         grid_calibration_path=grid_path,
+        spherical_tracking_config=spherical_config,
         sidereal_config=fit_config,
         metadata_loader=lambda path: frames[paths.index(path)].metadata,
     )
+
+    assert first.reused_detection_product is False
+    assert first.reused_temporal_tracking_product is False
+    assert first.reused_stellar_tracking_product is False
     assert first.reused_sidereal_product is False
-    assert first.sidereal_product_path == (
-        product_dir / "sidereal_rotation.npz"
+    assert first.temporal_tracking_product_path == (
+        product_dir / "temporal_tracks.npz"
     ).resolve()
-    assert fit_calls == [1]
+    assert first.stellar_tracking_product_path == (
+        product_dir / "stellar_tracks.npz"
+    ).resolve()
+    assert first.tracking_product_path == first.stellar_tracking_product_path
+    assert detection_calls == [1]
+    assert temporal_calls == [1]
+    assert merge_calls == [1]
 
     monkeypatch.setattr(
-        "gonet_astrometry.runner._prepare_cached_reference",
-        lambda product, config: (prepared, catalogs[0]),
+        "gonet_astrometry.runner._prepare_multichannel_report_reference",
+        lambda sequence_arg, reference_path, detector: (prepared, catalogs[0]),
     )
+
     second = run_cli_workflow(
         [tmp_path],
         recursive=False,
@@ -699,13 +762,19 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
         output_path=tmp_path / "second.pdf",
         output_dir=product_dir,
         grid_calibration_path=grid_path,
+        spherical_tracking_config=spherical_config,
         sidereal_config=fit_config,
         metadata_loader=lambda path: frames[paths.index(path)].metadata,
     )
+
     assert second.reused_detection_product is True
+    assert second.reused_temporal_tracking_product is True
+    assert second.reused_stellar_tracking_product is True
     assert second.reused_tracking_product is True
     assert second.reused_sidereal_product is True
-    assert fit_calls == [1]
+    assert detection_calls == [1]
+    assert temporal_calls == [1]
+    assert merge_calls == [1]
 
     third = run_cli_workflow(
         [tmp_path],
@@ -717,11 +786,250 @@ def test_run_cli_workflow_reuses_sidereal_solution_independently(
         output_path=tmp_path / "third.pdf",
         output_dir=product_dir,
         grid_calibration_path=grid_path,
+        spherical_tracking_config=spherical_config,
         sidereal_config=fit_config,
         overwrite_solution=True,
         metadata_loader=lambda path: frames[paths.index(path)].metadata,
     )
+
     assert third.reused_detection_product is True
-    assert third.reused_tracking_product is True
+    assert third.reused_temporal_tracking_product is True
+    assert third.reused_stellar_tracking_product is False
+    assert third.reused_tracking_product is False
     assert third.reused_sidereal_product is False
-    assert fit_calls == [1, 1]
+    assert detection_calls == [1]
+    assert temporal_calls == [1]
+    assert merge_calls == [1, 1]
+
+
+def test_grid_run_allows_single_image_and_skips_tracking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from gonet_astrometry.models.grid import GridCalibration
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    path = (tmp_path / "single.jpg").resolve()
+    path.write_bytes(b"raw")
+    grid_path = tmp_path / "camera_calibration.npz"
+    grid_path.write_bytes(b"portable grid")
+
+    frame = _frame(path, 0)
+    catalog = DetectionCatalog(
+        str(path),
+        (Detection(0, 5.0, 6.0, 10.0, 10.0, 0.5, 0.5),),
+        "sep-independent-channels",
+    )
+    sequence = DetectionSequence.from_epochs(
+        [DetectionEpoch.from_frame(str(path), frame, catalog)]
+    )
+    detected = DetectionRunArtifacts(
+        files=(path,),
+        algorithm="sep-independent-channels",
+        sequence=sequence,
+        reference_path=path,
+        reference_catalog=catalog,
+        reference_prepared=_prepared(),
+    )
+
+    class Transform:
+        def pixel_to_ray(self, x, y):
+            del y
+            return np.zeros(np.asarray(x).shape + (3,), dtype=float)
+
+    calibration = GridCalibration(
+        transform=Transform(),
+        image_shape=(20, 20),
+        coordinate_convention="test",
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_grid_calibration",
+        lambda path: calibration,
+    )
+
+    class FakeMultichannelDetector:
+        name = "sep-independent-channels"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def prepare_report_image(self, frame):
+            del frame
+            return _prepared()
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.IndependentChannelSEPDetector",
+        FakeMultichannelDetector,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.execute_multichannel_detection_run",
+        lambda *args, **kwargs: detected,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._track_spherical_sequence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("single-image run must not start temporal tracking")
+        ),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_file_raw",
+        lambda path, parse_metadata=False: object(),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.get_raw_channel",
+        lambda raw, channel: np.zeros((10, 10), dtype=float),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.write_tracking_report_pdf",
+        lambda path, **kwargs: path.resolve(),
+    )
+
+    product_dir = tmp_path / "products"
+    summary = run_cli_workflow(
+        [path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=TrackingConfig(),
+        channel="green1",
+        output_path=tmp_path / "single.pdf",
+        output_dir=product_dir,
+        grid_calibration_path=grid_path,
+        metadata_loader=lambda source: frame.metadata,
+    )
+
+    assert summary.file_count == 1
+    assert summary.detection_count == 1
+    assert summary.track_count == 0
+    assert summary.assigned_detection_count == 0
+    assert summary.unassigned_detection_count == 1
+    assert summary.detection_product_path == (product_dir / "detections.npz").resolve()
+    assert summary.temporal_tracking_product_path is None
+    assert summary.stellar_tracking_product_path is None
+    assert summary.sidereal_product_path is None
+
+
+def test_grid_run_short_sequence_stops_after_temporal_tracking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from gonet_astrometry.models.grid import GridCalibration
+    from gonet_astrometry.tracking.image_plane import ImagePlaneTracker
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+    from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
+
+    paths = tuple((tmp_path / f"short-{index}.jpg").resolve() for index in range(2))
+    for index, path in enumerate(paths):
+        path.write_bytes(b"raw" + bytes([index]))
+    grid_path = tmp_path / "camera_calibration.npz"
+    grid_path.write_bytes(b"portable grid")
+
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = tuple(
+        DetectionCatalog(
+            str(path),
+            (Detection(index, 5.0 + index, 6.0, 10.0, 10.0, 0.5, 0.5),),
+            "sep-independent-channels",
+        )
+        for index, path in enumerate(paths)
+    )
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=True)
+        ]
+    )
+    temporal = ImagePlaneTracker(
+        TrackingConfig(min_track_length=2, prediction_tolerance_px=3.0)
+    ).track(sequence)
+    detected = DetectionRunArtifacts(
+        files=paths,
+        algorithm="sep-independent-channels",
+        sequence=sequence,
+        reference_path=paths[0],
+        reference_catalog=catalogs[0],
+        reference_prepared=_prepared(),
+    )
+
+    class Transform:
+        def pixel_to_ray(self, x, y):
+            del y
+            rays = np.zeros(np.asarray(x).shape + (3,), dtype=float)
+            rays[..., 2] = 1.0
+            return rays
+
+    calibration = GridCalibration(
+        transform=Transform(),
+        image_shape=(20, 20),
+        coordinate_convention="test",
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_grid_calibration",
+        lambda path: calibration,
+    )
+
+    class FakeMultichannelDetector:
+        name = "sep-independent-channels"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def prepare_report_image(self, frame):
+            del frame
+            return _prepared()
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.IndependentChannelSEPDetector",
+        FakeMultichannelDetector,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.execute_multichannel_detection_run",
+        lambda *args, **kwargs: detected,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._track_spherical_sequence",
+        lambda *args, **kwargs: temporal,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.SiderealAxisFitter.fit_candidate_count",
+        lambda self, tracking_result, grid: 0,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.SiderealTrackMerger",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("short sequence must not start stellar optimization")
+        ),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_file_raw",
+        lambda path, parse_metadata=False: object(),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.get_raw_channel",
+        lambda raw, channel: np.zeros((10, 10), dtype=float),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.write_tracking_report_pdf",
+        lambda path, **kwargs: path.resolve(),
+    )
+
+    product_dir = tmp_path / "products"
+    summary = run_cli_workflow(
+        [tmp_path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=TrackingConfig(min_track_length=2),
+        channel="green1",
+        output_path=tmp_path / "short.pdf",
+        output_dir=product_dir,
+        grid_calibration_path=grid_path,
+        spherical_tracking_config=SphericalTrackingConfig(min_track_length=2),
+        metadata_loader=lambda path: frames[paths.index(path)].metadata,
+    )
+
+    assert summary.temporal_tracking_product_path == (
+        product_dir / "temporal_tracks.npz"
+    ).resolve()
+    assert summary.tracking_product_path == summary.temporal_tracking_product_path
+    assert summary.stellar_tracking_product_path is None
+    assert summary.sidereal_product_path is None
+    assert summary.track_count == len(temporal.tracks)

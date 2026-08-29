@@ -167,7 +167,6 @@ def test_load_gonet_image_builds_scientific_frame(monkeypatch) -> None:
     assert np.array_equal(GONetImageLoader().load(Path("frame.jpg")).data, frame.data)
 
 
-
 def test_load_gonet_metadata_skips_bayer_reconstruction(monkeypatch) -> None:
     raw = FakeRawFile()
     calls: list[tuple[Path, bool]] = []

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
-from typing import Any, cast
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -124,9 +124,8 @@ def load_tracking_product(
             count = len(identifiers)
             if len(offsets) != count + 1 or offsets[0] != 0:
                 raise ProductFormatError("Invalid tracking point offsets")
-            if (
-                int(offsets[-1]) != len(frame_ids)
-                or len(frame_ids) != len(detection_ids)
+            if int(offsets[-1]) != len(frame_ids) or len(frame_ids) != len(
+                detection_ids
             ):
                 raise ProductFormatError(
                     "Tracking point arrays have inconsistent lengths"
@@ -166,9 +165,7 @@ def load_tracking_product(
             config_mapping = cast(dict[str, Any], config_payload)
             product = TrackingProduct(
                 product_id=_read_scalar_string(data, "product_id"),
-                detection_product_id=_read_scalar_string(
-                    data, "detection_product_id"
-                ),
+                detection_product_id=_read_scalar_string(data, "detection_product_id"),
                 tracking_config=TrackingConfig(**config_mapping),
                 result=ImagePlaneTrackingResult(sequence, tuple(tracks)),
             )

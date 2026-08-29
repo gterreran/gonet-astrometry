@@ -42,6 +42,15 @@ def sequence_timing_diagnostics(
 ) -> SequenceTimingDiagnostics:
     """Summarize the actual intervals between chronological exposure midpoints."""
     intervals = np.asarray(sequence.epoch_intervals_seconds, dtype=np.float64)
+    if intervals.size == 0:
+        return SequenceTimingDiagnostics(
+            epoch_count=len(sequence.epochs),
+            duration_s=sequence.duration_seconds,
+            min_interval_s=0.0,
+            median_interval_s=0.0,
+            p90_interval_s=0.0,
+            max_interval_s=0.0,
+        )
     return SequenceTimingDiagnostics(
         epoch_count=len(sequence.epochs),
         duration_s=sequence.duration_seconds,
@@ -79,7 +88,5 @@ def track_population_diagnostics(
             float(np.percentile(durations, 90.0)) if durations.size else 0.0
         ),
         max_duration_s=float(np.max(durations)) if durations.size else 0.0,
-        median_coverage_fraction=(
-            float(np.median(coverage)) if coverage.size else 0.0
-        ),
+        median_coverage_fraction=(float(np.median(coverage)) if coverage.size else 0.0),
     )

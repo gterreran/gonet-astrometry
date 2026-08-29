@@ -399,9 +399,7 @@ class AbsoluteOrientationSolver:
             [anchor.declination_deg for anchor in anchors], dtype=np.float64
         )
         catalog_phase = _phase_about_axis(catalog_rays, enu_first, enu_second)
-        catalog_dec = np.rad2deg(
-            np.arcsin(np.clip(catalog_rays @ ncp_enu, -1.0, 1.0))
-        )
+        catalog_dec = np.rad2deg(np.arcsin(np.clip(catalog_rays @ ncp_enu, -1.0, 1.0)))
 
         bootstrap_phase = _phase_about_axis(bootstrap_rays, enu_first, enu_second)
         bootstrap_dec = np.rad2deg(
@@ -413,9 +411,7 @@ class AbsoluteOrientationSolver:
                 observed_dec,
                 bootstrap_phase,
                 bootstrap_dec,
-                label=(
-                    f"V<={self.config.bootstrap_limiting_magnitude:g} bootstrap"
-                ),
+                label=(f"V<={self.config.bootstrap_limiting_magnitude:g} bootstrap"),
             )
         except ValueError as exc:
             if len(bootstrap_catalog) == len(catalog):
@@ -461,8 +457,7 @@ class AbsoluteOrientationSolver:
             deltas = np.asarray(
                 [
                     _wrap_angle(
-                        bootstrap_phase[catalog_index]
-                        - observed_phase[obs_index]
+                        bootstrap_phase[catalog_index] - observed_phase[obs_index]
                     )
                     for obs_index, catalog_index, _ in matches
                 ],
@@ -511,8 +506,7 @@ class AbsoluteOrientationSolver:
             deltas = np.asarray(
                 [
                     _wrap_angle(
-                        catalog_phase[catalog_index]
-                        - observed_phase[obs_index]
+                        catalog_phase[catalog_index] - observed_phase[obs_index]
                     )
                     for obs_index, catalog_index, _ in matches
                 ],
@@ -666,16 +660,11 @@ class AbsoluteOrientationSolver:
                 np.arcsin(np.clip(rays @ ncp_grid, -1.0, 1.0))
             )
             declination_median = float(np.median(point_declination))
-            declination_deviation = np.abs(
-                point_declination - declination_median
-            )
-            declination_robust_sigma = float(
-                1.4826 * np.median(declination_deviation)
-            )
+            declination_deviation = np.abs(point_declination - declination_median)
+            declination_robust_sigma = float(1.4826 * np.median(declination_deviation))
             declination_p95 = float(np.percentile(declination_deviation, 95.0))
             if (
-                declination_robust_sigma
-                > self.config.max_declination_robust_sigma_deg
+                declination_robust_sigma > self.config.max_declination_robust_sigma_deg
                 or declination_p95 > self.config.max_declination_p95_deg
             ):
                 continue
@@ -1031,10 +1020,9 @@ def _phase_declination_separation_deg(
         np.sin(observed_phase - catalog_phase),
         np.cos(observed_phase - catalog_phase),
     )
-    cosine = (
-        np.sin(observed_dec) * np.sin(catalog_dec)
-        + np.cos(observed_dec) * np.cos(catalog_dec) * np.cos(phase_delta)
-    )
+    cosine = np.sin(observed_dec) * np.sin(catalog_dec) + np.cos(observed_dec) * np.cos(
+        catalog_dec
+    ) * np.cos(phase_delta)
     return np.rad2deg(np.arccos(np.clip(cosine, -1.0, 1.0)))
 
 

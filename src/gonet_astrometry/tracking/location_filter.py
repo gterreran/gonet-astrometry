@@ -88,8 +88,7 @@ def select_dominant_location_group(
             if location_separation_m(reference.location, item.location) <= tolerance_m
         )
         compactness = sum(
-            location_separation_m(reference.location, item.location)
-            for item in members
+            location_separation_m(reference.location, item.location) for item in members
         )
         if len(members) > len(best_group) or (
             len(members) == len(best_group) and compactness < best_compactness

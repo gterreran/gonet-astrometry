@@ -138,6 +138,21 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "--grid-calibration",
             "camera_calibration.npz",
             "--overwrite-solution",
+            "--field-edge-threshold-fraction",
+            "0.25",
+            "--field-edge-keep-margin-px",
+            "48",
+            "--no-use-provisional-field-mask",
+            "--grid-search-radius-deg",
+            "75",
+            "--grid-acceptance-radius-deg",
+            "70",
+            "--multichannel-min-support",
+            "2",
+            "--spherical-prediction-tolerance-arcmin",
+            "6",
+            "--stellar-merge-radius-arcmin",
+            "12",
             "--sidereal-min-track-points",
             "7",
             "--sidereal-consistent-rms-deg",
@@ -180,6 +195,14 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.overwrite_products is True
     assert arguments.grid_calibration == Path("camera_calibration.npz")
     assert arguments.overwrite_solution is True
+    assert arguments.footprint_threshold_fraction == 0.25
+    assert arguments.use_provisional_field_mask is False
+    assert arguments.field_edge_keep_margin_px == 48.0
+    assert arguments.grid_search_radius_deg == 75.0
+    assert arguments.grid_acceptance_radius_deg == 70.0
+    assert arguments.multichannel_min_support == 2
+    assert arguments.spherical_prediction_tolerance_arcmin == 6.0
+    assert arguments.stellar_merge_radius_arcmin == 12.0
     assert arguments.sidereal_min_track_points == 7
     assert arguments.sidereal_consistent_rms_deg == 0.2
     assert arguments.solve_orientation is True
@@ -211,6 +234,10 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
             skipped_file_count=2,
             reused_detection_product=False,
             reused_tracking_product=False,
+            temporal_tracking_product_path=None,
+            stellar_tracking_product_path=None,
+            reused_temporal_tracking_product=False,
+            reused_stellar_tracking_product=False,
             sidereal_product_path=None,
             reused_sidereal_product=False,
             orientation_product_path=None,
@@ -243,10 +270,34 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["reference_image_path"] is None
     assert calls[0]["overwrite_products"] is False
     assert calls[0]["grid_calibration_path"] is None
+    assert calls[0]["field_mask_path"] is None
+    assert calls[0]["multichannel_config"].field_edge_keep_margin_px == 0.0
+    assert calls[0]["multichannel_config"].grid_search_radius_deg is None
+    assert calls[0]["multichannel_config"].grid_acceptance_radius_deg is None
+    assert calls[0]["multichannel_config"].minimum_channel_support == 1
+    assert calls[0]["spherical_tracking_config"].prediction_tolerance_arcmin == 5.0
+    assert calls[0]["stellar_merge_config"].merge_radius_deg == 10.0 / 60.0
     assert calls[0]["overwrite_solution"] is False
+    assert calls[0]["detection_only"] is False
     assert calls[0]["sidereal_config"].min_track_points == 5
     assert calls[0]["solve_orientation"] is False
     assert calls[0]["catalog_cache_path"] is None
     assert calls[0]["overwrite_orientation"] is False
     assert calls[0]["orientation_config"].min_matches == 8
     assert "300 detections" in capsys.readouterr().out
+
+
+def test_run_parser_accepts_detection_only_grid_mode() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "run",
+            "frame.jpg",
+            "--algorithm",
+            "sep",
+            "--grid-calibration",
+            "camera_calibration.npz",
+            "--detection-only",
+        ]
+    )
+
+    assert arguments.detection_only is True

@@ -87,15 +87,15 @@ class DetectionSequence:
     Raises
     ------
     ValueError
-        If fewer than two epochs are supplied, identifiers or timestamps are
-        duplicated, image geometry changes, or timestamps are not increasing.
+        If no epochs are supplied, identifiers or timestamps are duplicated,
+        image geometry changes, or timestamps are not increasing.
     """
 
     epochs: tuple[DetectionEpoch, ...]
 
     def __post_init__(self) -> None:
-        if len(self.epochs) < 2:
-            raise ValueError("A DetectionSequence requires at least two epochs")
+        if not self.epochs:
+            raise ValueError("A DetectionSequence requires at least one epoch")
         frame_ids = [epoch.frame_identifier for epoch in self.epochs]
         if len(set(frame_ids)) != len(frame_ids):
             raise ValueError("DetectionSequence frame identifiers must be unique")

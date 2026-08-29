@@ -116,16 +116,14 @@ def _tracking_result() -> tuple[ImagePlaneTrackingResult, np.ndarray, GridCalibr
     return ImagePlaneTrackingResult(sequence, tracks), axis, calibration
 
 
-
-def _tracking_result_with_conflicting_tracks() -> tuple[
-    ImagePlaneTrackingResult, np.ndarray, GridCalibration
-]:
+def _tracking_result_with_conflicting_tracks() -> (
+    tuple[ImagePlaneTrackingResult, np.ndarray, GridCalibration]
+):
     base, expected_axis, calibration = _tracking_result()
     elapsed = np.asarray(
         [
             (
-                epoch.exposure_midpoint
-                - base.sequence.epochs[0].exposure_midpoint
+                epoch.exposure_midpoint - base.sequence.epochs[0].exposure_midpoint
             ).total_seconds()
             for epoch in base.sequence.epochs
         ],
@@ -229,8 +227,9 @@ def test_sidereal_axis_fitter_recovers_known_rotation_axis() -> None:
     assert counts["sidereal-rejected"] == 0
 
 
-def test_sidereal_axis_fitter_uses_common_axis_consensus_with_conflicting_tracks(
-) -> None:
+def test_sidereal_axis_fitter_uses_common_axis_consensus_with_conflicting_tracks() -> (
+    None
+):
     tracking, expected_axis, calibration = _tracking_result_with_conflicting_tracks()
     solution = SiderealAxisFitter(
         SiderealFitConfig(

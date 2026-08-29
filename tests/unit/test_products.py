@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.models.detection import (
     Detection,
     DetectionCatalog,
@@ -21,6 +22,7 @@ from gonet_astrometry.products import (
     load_detection_product,
     load_sidereal_product,
     load_tracking_product,
+    multichannel_detection_product_id,
     save_detection_product,
     save_sidereal_product,
     save_tracking_product,
@@ -197,13 +199,9 @@ def test_detection_product_id_changes_when_input_changes(tmp_path: Path) -> None
     path = tmp_path / "frame.jpg"
     path.write_bytes(b"first")
     config = DetectionConfig()
-    first = detection_product_id(
-        [path], "sep", config, location_tolerance_m=250.0
-    )
+    first = detection_product_id([path], "sep", config, location_tolerance_m=250.0)
     path.write_bytes(b"second version")
-    second = detection_product_id(
-        [path], "sep", config, location_tolerance_m=250.0
-    )
+    second = detection_product_id([path], "sep", config, location_tolerance_m=250.0)
 
     assert first != second
 
@@ -299,3 +297,33 @@ def test_product_store_exposes_orientation_paths(tmp_path: Path) -> None:
 
     assert store.bright_star_catalog_path == tmp_path / "bright_star_catalog.npz"
     assert store.orientation_path == tmp_path / "absolute_orientation.npz"
+
+
+def test_multichannel_detection_product_id_tracks_field_mask(tmp_path: Path) -> None:
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(b"frame")
+    grid_path = tmp_path / "grid.npz"
+    grid_path.write_bytes(b"grid")
+    mask_path = tmp_path / "field_mask.npz"
+    mask_path.write_bytes(b"first mask")
+
+    kwargs = dict(
+        paths=[image_path],
+        config=DetectionConfig(),
+        multichannel_config=MultiChannelSEPConfig(),
+        grid_calibration_path=grid_path,
+        location_tolerance_m=250.0,
+    )
+    without_mask = multichannel_detection_product_id(**kwargs)
+    first = multichannel_detection_product_id(
+        **kwargs,
+        field_mask_path=mask_path,
+    )
+    mask_path.write_bytes(b"updated mask")
+    second = multichannel_detection_product_id(
+        **kwargs,
+        field_mask_path=mask_path,
+    )
+
+    assert first != without_mask
+    assert second != first

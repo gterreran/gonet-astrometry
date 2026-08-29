@@ -243,16 +243,7 @@ class SiderealAxisFitter:
                 f"sequence={tracking.sequence.epochs[0].image_shape}"
             )
         ray_tracks = self._build_ray_tracks(tracking, calibration)
-        eligible = [track for track in ray_tracks if self._is_sufficient(track)]
-        candidate_tracks = [
-            track for track in eligible if track.bootstrap_class == "candidate"
-        ]
-        if len(candidate_tracks) < 3:
-            candidate_tracks = [
-                track for track in eligible if track.bootstrap_class != "poor-fit"
-            ]
-        candidate_tracks.sort(key=self._information_score, reverse=True)
-        candidate_tracks = candidate_tracks[: self.config.max_fit_tracks]
+        candidate_tracks = self._fit_candidate_tracks(ray_tracks)
         if len(candidate_tracks) < 3:
             raise ValueError(
                 "At least three sufficiently long Grid-calibrated candidate tracks "
@@ -296,9 +287,7 @@ class SiderealAxisFitter:
         diagnostics = tuple(
             self._diagnose_track(track, signed_axis) for track in ray_tracks
         )
-        angular_fit_residuals = self._fit_angular_residuals(
-            fit_tracks, signed_axis
-        )
+        angular_fit_residuals = self._fit_angular_residuals(fit_tracks, signed_axis)
         return SiderealRotationSolution(
             axis_grid=axis,
             fit_rms_deg=float(np.sqrt(np.mean(np.square(angular_fit_residuals)))),
@@ -313,14 +302,46 @@ class SiderealAxisFitter:
             rotation_sign=rotation_sign,
         )
 
+    def fit_candidate_count(
+        self,
+        tracking: ImagePlaneTrackingResult,
+        calibration: GridCalibration,
+    ) -> int:
+        """Return the number of tracks eligible to seed a shared-axis fit.
+
+        This performs the same Grid validation and sufficiency filtering used
+        by :meth:`fit`, but does not run consensus finding or nonlinear
+        optimization. It is intended for orchestration code that needs to
+        decide whether a sidereal solve is meaningful for a short sequence.
+        """
+        if tracking.sequence.epochs[0].image_shape != calibration.image_shape:
+            raise ValueError(
+                "Grid calibration sensor shape does not match the detection sequence: "
+                f"calibration={calibration.image_shape}, "
+                f"sequence={tracking.sequence.epochs[0].image_shape}"
+            )
+        ray_tracks = self._build_ray_tracks(tracking, calibration)
+        return len(self._fit_candidate_tracks(ray_tracks))
+
+    def _fit_candidate_tracks(self, ray_tracks: list[_RayTrack]) -> list[_RayTrack]:
+        """Return sufficiently informative tracks in fitter priority order."""
+        eligible = [track for track in ray_tracks if self._is_sufficient(track)]
+        candidate_tracks = [
+            track for track in eligible if track.bootstrap_class == "candidate"
+        ]
+        if len(candidate_tracks) < 3:
+            candidate_tracks = [
+                track for track in eligible if track.bootstrap_class != "poor-fit"
+            ]
+        candidate_tracks.sort(key=self._information_score, reverse=True)
+        return candidate_tracks[: self.config.max_fit_tracks]
+
     def _build_ray_tracks(
         self,
         tracking: ImagePlaneTrackingResult,
         calibration: GridCalibration,
     ) -> list[_RayTrack]:
-        epochs = {
-            epoch.frame_identifier: epoch for epoch in tracking.sequence.epochs
-        }
+        epochs = {epoch.frame_identifier: epoch for epoch in tracking.sequence.epochs}
         detections = {
             epoch.frame_identifier: {
                 detection.identifier: detection
@@ -351,9 +372,7 @@ class SiderealAxisFitter:
             calibration,
             x,
             y,
-            reprojection_tolerance_px=(
-                self.config.inverse_reprojection_tolerance_px
-            ),
+            reprojection_tolerance_px=(self.config.inverse_reprojection_tolerance_px),
         )
         ray_tracks: list[_RayTrack] = []
         offset = 0
@@ -432,9 +451,7 @@ class SiderealAxisFitter:
         inliers = support[best]
 
         axis = self._weighted_axis(normals[inliers], weights[inliers])
-        distances = np.rad2deg(
-            np.arccos(np.clip(np.abs(normals @ axis), 0.0, 1.0))
-        )
+        distances = np.rad2deg(np.arccos(np.clip(np.abs(normals @ axis), 0.0, 1.0)))
         inliers = distances <= tolerance_deg
         if int(np.count_nonzero(inliers)) < 3:
             raise ValueError("Could not find a coherent common-axis track consensus")
@@ -584,6 +601,7 @@ class SiderealAxisFitter:
             for track in tracks
         ]
         return np.concatenate(pieces)
+
 
 def _track_rms_deg(
     track: _RayTrack,

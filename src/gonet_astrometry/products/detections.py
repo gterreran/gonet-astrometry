@@ -126,9 +126,7 @@ def save_detection_product(path: Path, product: DetectionProduct) -> Path:
         "image_shapes": np.asarray(
             [epoch.image_shape for epoch in epochs], dtype=np.int64
         ),
-        "sensor_orientations": _strings(
-            epoch.sensor_orientation for epoch in epochs
-        ),
+        "sensor_orientations": _strings(epoch.sensor_orientation for epoch in epochs),
         "detector_names": _strings(epoch.catalog.detector_name for epoch in epochs),
         "catalog_offsets": np.asarray(offsets, dtype=np.int64),
         "detection_identifier": np.asarray(
@@ -275,8 +273,7 @@ def load_detection_product(
                     Path(item) for item in _read_strings(data, "zero_gps_files")
                 ),
                 location_outlier_files=tuple(
-                    Path(item)
-                    for item in _read_strings(data, "location_outlier_files")
+                    Path(item) for item in _read_strings(data, "location_outlier_files")
                 ),
                 metadata_errors=tuple(
                     (Path(item), message)

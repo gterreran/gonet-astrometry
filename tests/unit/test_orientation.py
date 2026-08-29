@@ -76,9 +76,9 @@ def _orientation_matrix(ncp_grid: np.ndarray, ncp_enu: np.ndarray, twist: float)
     c = np.cos(twist)
     s = np.sin(twist)
     rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
-    return np.column_stack((e1, e2, ncp_enu)) @ rz @ np.column_stack(
-        (g1, g2, ncp_grid)
-    ).T
+    return (
+        np.column_stack((e1, e2, ncp_enu)) @ rz @ np.column_stack((g1, g2, ncp_grid)).T
+    )
 
 
 def _synthetic_orientation_case():
@@ -115,9 +115,7 @@ def _synthetic_orientation_case():
                 SIDEREAL_RATE_RAD_PER_SECOND * (seconds - reference_seconds),
             )
             x, y = _pixel_from_ray(ray)
-            detections.append(
-                Detection(star_index, x, y, 100.0, 20.0, 0.1, 0.1)
-            )
+            detections.append(Detection(star_index, x, y, 100.0, 20.0, 0.1, 0.1))
         frame_id = f"frame-{epoch_index}"
         epochs.append(
             DetectionEpoch(
@@ -134,9 +132,7 @@ def _synthetic_orientation_case():
     tracks = tuple(
         StarTrack(
             identifier=index,
-            points=tuple(
-                TrackPoint(epoch.frame_identifier, index) for epoch in epochs
-            ),
+            points=tuple(TrackPoint(epoch.frame_identifier, index) for epoch in epochs),
         )
         for index in range(len(reference_rays))
     )

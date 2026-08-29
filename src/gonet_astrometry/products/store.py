@@ -29,6 +29,16 @@ class ProductStore:
         return self.output_dir / "tracks.npz"
 
     @property
+    def temporal_tracks_path(self) -> Path:
+        """Return the Grid-aware spherical temporal-track product path."""
+        return self.output_dir / "temporal_tracks.npz"
+
+    @property
+    def stellar_tracks_path(self) -> Path:
+        """Return the merged physical stellar-track product path."""
+        return self.output_dir / "stellar_tracks.npz"
+
+    @property
     def sidereal_path(self) -> Path:
         """Return the portable Grid-calibrated sidereal solution path."""
         return self.output_dir / "sidereal_rotation.npz"

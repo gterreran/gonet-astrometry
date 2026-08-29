@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.solving.orientation import OrientationFitConfig
 from gonet_astrometry.solving.sidereal import SiderealFitConfig
+from gonet_astrometry.solving.stellar_tracks import StellarTrackMergeConfig
 from gonet_astrometry.tracking.config import TrackingConfig
+from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
 
 DETECTION_PIPELINE_REVISION = 1
 """Manual cache revision for changes to detection semantics."""
@@ -24,6 +28,15 @@ SIDEREAL_PIPELINE_REVISION = 2
 
 ORIENTATION_PIPELINE_REVISION = 4
 """Manual cache revision for catalog-assisted absolute-orientation semantics."""
+
+MULTICHANNEL_DETECTION_PIPELINE_REVISION = 2
+"""Manual cache revision for independent native-channel SEP semantics."""
+
+SPHERICAL_TRACKING_PIPELINE_REVISION = 1
+"""Manual cache revision for Grid-aware spherical temporal association."""
+
+STELLAR_TRACKING_PIPELINE_REVISION = 1
+"""Manual cache revision for sidereal fragment bootstrap/merge semantics."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +124,71 @@ def tracking_product_id(
         "pipeline_revision": TRACKING_PIPELINE_REVISION,
         "detection_product_id": detection_id,
         "tracking_config": asdict(config),
+    }
+    return _digest(payload)
+
+
+def multichannel_detection_product_id(
+    paths: Iterable[Path],
+    config: DetectionConfig,
+    multichannel_config: MultiChannelSEPConfig,
+    grid_calibration_path: Path,
+    location_tolerance_m: float,
+    field_mask_path: Path | None = None,
+) -> str:
+    """Return the semantic identity of independent-channel detections."""
+    grid = fingerprint_inputs((grid_calibration_path,))[0]
+    field_mask = (
+        fingerprint_inputs((field_mask_path,))[0].as_mapping()
+        if field_mask_path is not None
+        else None
+    )
+    payload = {
+        "kind": "multichannel-detections",
+        "schema_version": 1,
+        "pipeline_revision": MULTICHANNEL_DETECTION_PIPELINE_REVISION,
+        "inputs": [item.as_mapping() for item in fingerprint_inputs(paths)],
+        "algorithm": "sep-independent-channels",
+        "detection_config": asdict(config),
+        "multichannel_config": asdict(multichannel_config),
+        "grid_calibration": grid.as_mapping(),
+        "field_mask": field_mask,
+        "location_tolerance_m": location_tolerance_m,
+    }
+    return _digest(payload)
+
+
+def spherical_tracking_product_id(
+    detection_id: str,
+    grid_calibration_path: Path,
+    config: SphericalTrackingConfig,
+) -> str:
+    """Return the semantic identity of spherical temporal associations."""
+    grid = fingerprint_inputs((grid_calibration_path,))[0]
+    payload = {
+        "kind": "spherical-temporal-tracks",
+        "schema_version": 1,
+        "pipeline_revision": SPHERICAL_TRACKING_PIPELINE_REVISION,
+        "detection_product_id": detection_id,
+        "grid_calibration": grid.as_mapping(),
+        "tracking_config": asdict(config),
+    }
+    return _digest(payload)
+
+
+def stellar_tracking_product_id(
+    temporal_tracking_id: str,
+    merge_config: StellarTrackMergeConfig,
+    sidereal_config: SiderealFitConfig,
+) -> str:
+    """Return the semantic identity of merged physical stellar tracks."""
+    payload = {
+        "kind": "stellar-tracks",
+        "schema_version": 1,
+        "pipeline_revision": STELLAR_TRACKING_PIPELINE_REVISION,
+        "temporal_tracking_product_id": temporal_tracking_id,
+        "merge_config": asdict(merge_config),
+        "sidereal_config": asdict(sidereal_config),
     }
     return _digest(payload)
 

@@ -65,9 +65,7 @@ def save_orientation_product(path: Path, product: OrientationProduct) -> Path:
         "ncp_enu": np.asarray(product.solution.ncp_enu, dtype=np.float64),
         "twist_deg": np.asarray(product.solution.twist_deg, dtype=np.float64),
         "fit_rms_deg": np.asarray(product.solution.fit_rms_deg, dtype=np.float64),
-        "fit_median_deg": np.asarray(
-            product.solution.fit_median_deg, dtype=np.float64
-        ),
+        "fit_median_deg": np.asarray(product.solution.fit_median_deg, dtype=np.float64),
         "fit_p95_deg": np.asarray(product.solution.fit_p95_deg, dtype=np.float64),
         "anchor_count": np.asarray(product.solution.anchor_count, dtype=np.int64),
         "catalog_star_count": np.asarray(

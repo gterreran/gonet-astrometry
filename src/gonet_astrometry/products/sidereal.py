@@ -66,9 +66,7 @@ def save_sidereal_product(path: Path, product: SiderealProduct) -> Path:
         ),
         "axis_grid": np.asarray(product.solution.axis_grid, dtype=np.float64),
         "fit_rms_deg": np.asarray(product.solution.fit_rms_deg, dtype=np.float64),
-        "fit_median_deg": np.asarray(
-            product.solution.fit_median_deg, dtype=np.float64
-        ),
+        "fit_median_deg": np.asarray(product.solution.fit_median_deg, dtype=np.float64),
         "fit_p95_deg": np.asarray(product.solution.fit_p95_deg, dtype=np.float64),
         "fitted_track_count": np.asarray(
             product.solution.fitted_track_count, dtype=np.int64

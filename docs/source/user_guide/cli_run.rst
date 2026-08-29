@@ -49,6 +49,26 @@ available as a command-line option. For example::
 settings use paired options such as ``--deblend`` / ``--no-deblend`` and
 ``--use-provisional-field-mask`` / ``--no-use-provisional-field-mask``.
 
+For the Grid-assisted independent-channel SEP path, the default search field is
+the automatically inferred illuminated fisheye footprint rather than a fixed
+angular-radius cut. ``--field-edge-threshold-fraction`` controls the
+center-to-corner intensity threshold used to infer that footprint (default
+``0.2``). The historical ``--footprint-threshold-fraction`` spelling remains an
+alias. ``--field-edge-keep-margin-px`` then optionally requires source centroids
+to lie an additional full-sensor distance inside the inferred footprint before
+they are retained. Its default is ``0``, so the established
+``--footprint-erosion-px`` conservative erosion defines the accepted edge unless
+an extra guard band is requested. Optional ``--grid-search-radius-deg`` and
+``--grid-acceptance-radius-deg`` settings intersect those image-driven masks with
+Grid-calibrated angular-radius caps. For an exact reproduction of the historical
+75-degree search / 70-degree acceptance field, use::
+
+   --no-use-provisional-field-mask \
+   --grid-search-radius-deg 75 \
+   --grid-acceptance-radius-deg 70
+
+Static ``--field-mask`` exclusions are combined with both regions when supplied.
+
 Location preflight
 ------------------
 

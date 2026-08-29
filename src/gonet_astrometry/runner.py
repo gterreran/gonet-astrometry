@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
-from gonet_astrometry.adapters.grid_calibration import load_grid_calibration
 from gonet_astrometry.adapters.gonet_wizard import (
     GONetChannel,
     get_raw_channel,
@@ -21,10 +20,16 @@ from gonet_astrometry.adapters.gonet_wizard import (
     load_gonet_image,
     load_gonet_metadata,
 )
+from gonet_astrometry.adapters.grid_calibration import load_grid_calibration
 from gonet_astrometry.catalogs import load_or_fetch_bright_star_catalog
 from gonet_astrometry.detection.base import SourceDetector
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.diagnostics import enrich_detection_catalog
+from gonet_astrometry.detection.field_mask import load_field_mask
+from gonet_astrometry.detection.multichannel import (
+    IndependentChannelSEPDetector,
+    MultiChannelSEPConfig,
+)
 from gonet_astrometry.detection.preprocessing import (
     PreparedDetectionImage,
     prepare_bayer_detection_image,
@@ -41,18 +46,27 @@ from gonet_astrometry.products import (
     ProductError,
     ProductStore,
     SiderealProduct,
+    StellarTrackingProduct,
+    TemporalTrackingProduct,
     TrackingProduct,
     detection_product_id,
     load_detection_product,
     load_orientation_product,
     load_sidereal_product,
+    load_stellar_tracking_product,
+    load_temporal_tracking_product,
     load_tracking_product,
+    multichannel_detection_product_id,
     orientation_product_id,
     save_detection_product,
     save_orientation_product,
     save_sidereal_product,
+    save_stellar_tracking_product,
+    save_temporal_tracking_product,
     save_tracking_product,
     sidereal_product_id,
+    spherical_tracking_product_id,
+    stellar_tracking_product_id,
     tracking_product_id,
 )
 from gonet_astrometry.solving.orientation import (
@@ -65,20 +79,29 @@ from gonet_astrometry.solving.sidereal import (
     SiderealFitConfig,
     SiderealRotationSolution,
 )
+from gonet_astrometry.solving.stellar_tracks import (
+    SiderealTrackMerger,
+    StellarTrackMergeConfig,
+    StellarTrackMergeResult,
+)
 from gonet_astrometry.tracking.config import TrackingConfig
+from gonet_astrometry.tracking.image_plane import (
+    ImagePlaneTracker,
+    ImagePlaneTrackingResult,
+)
 from gonet_astrometry.tracking.location_filter import (
     LocatedInput,
     LocationGroupSelection,
     select_dominant_location_group,
 )
-from gonet_astrometry.tracking.image_plane import (
-    ImagePlaneTracker,
-    ImagePlaneTrackingResult,
-)
 from gonet_astrometry.tracking.sequence import (
     DetectionEpoch,
     DetectionSequence,
     location_separation_m,
+)
+from gonet_astrometry.tracking.spherical import (
+    SphericalTracker,
+    SphericalTrackingConfig,
 )
 from gonet_astrometry.tracking.temporal import (
     sequence_timing_diagnostics,
@@ -153,6 +176,9 @@ class TrackingRunArtifacts:
     grid_calibration: GridCalibration | None = None
     sidereal_solution: SiderealRotationSolution | None = None
     sidereal_fit_config: SiderealFitConfig | None = None
+    multichannel_detection_config: MultiChannelSEPConfig | None = None
+    spherical_tracking_config: SphericalTrackingConfig | None = None
+    stellar_merge_config: StellarTrackMergeConfig | None = None
     orientation_solution: AbsoluteOrientationSolution | None = None
     orientation_fit_config: OrientationFitConfig | None = None
 
@@ -173,10 +199,14 @@ class RunSummary:
     metadata_error_count: int = 0
     detection_product_path: Path | None = None
     tracking_product_path: Path | None = None
+    temporal_tracking_product_path: Path | None = None
+    stellar_tracking_product_path: Path | None = None
     sidereal_product_path: Path | None = None
     orientation_product_path: Path | None = None
     reused_detection_product: bool = False
     reused_tracking_product: bool = False
+    reused_temporal_tracking_product: bool = False
+    reused_stellar_tracking_product: bool = False
     reused_sidereal_product: bool = False
     reused_orientation_product: bool = False
 
@@ -254,9 +284,7 @@ def _log_location_preflight(preflight: LocationPreflight) -> None:
     for item in selection.zero_gps:
         logger.warning("Skipping %s because GPS is 0,0,0.", item.path)
     for item in selection.outliers:
-        separation = location_separation_m(
-            selection.reference.location, item.location
-        )
+        separation = location_separation_m(selection.reference.location, item.location)
         logger.warning(
             "Skipping %s because GPS is %.1f m from the dominant site.",
             item.path,
@@ -335,6 +363,106 @@ def execute_detection_run(
         reference_catalog=reference_catalog,
         reference_prepared=reference_prepared,
     )
+
+
+
+def execute_multichannel_detection_run(
+    paths: Iterable[Path],
+    detection_config: DetectionConfig,
+    multichannel_config: MultiChannelSEPConfig,
+    grid_calibration: GridCalibration,
+    *,
+    location_tolerance_m: float,
+    detector: IndependentChannelSEPDetector | None = None,
+    frame_loader: FrameLoader = load_gonet_image,
+    clock: Clock = perf_counter,
+) -> DetectionRunArtifacts:
+    """Detect one sequence with independent native-channel SEP extraction."""
+    files = tuple(
+        sorted(
+            {Path(path).expanduser().resolve() for path in paths},
+            key=lambda item: str(item).casefold(),
+        )
+    )
+    if not files:
+        raise ValueError("The run command requires at least one GONet image")
+
+    source_detector = detector or IndependentChannelSEPDetector(
+        grid_calibration,
+        detection_config,
+        multichannel_config,
+    )
+    epochs: list[DetectionEpoch] = []
+    reference_prepared: PreparedDetectionImage | None = None
+    reference_catalog: DetectionCatalog | None = None
+
+    for index, path in enumerate(files, start=1):
+        frame = frame_loader(path)
+        started = clock()
+        catalog = source_detector.detect(str(path), frame)
+        finished = clock()
+
+        if reference_prepared is None:
+            reference_prepared = source_detector.prepare_report_image(frame)
+            reference_catalog = catalog
+
+        epoch = DetectionEpoch.from_frame(str(path), frame, catalog)
+        epochs.append(epoch)
+        logger.info(
+            "Multichannel detection %d/%d | %s | %d candidates | %.3f s | "
+            "midpoint %s",
+            index,
+            len(files),
+            path.name,
+            len(catalog),
+            finished - started,
+            epoch.exposure_midpoint.isoformat(),
+        )
+
+    if reference_prepared is None or reference_catalog is None:  # pragma: no cover
+        raise RuntimeError("Detection run did not produce a reference catalog")
+
+    sequence = DetectionSequence.from_epochs(epochs)
+    sequence.validate_locations(location_tolerance_m)
+    _log_sequence_timing(sequence)
+    return DetectionRunArtifacts(
+        files=files,
+        algorithm=source_detector.name,
+        sequence=sequence,
+        reference_path=files[0],
+        reference_catalog=reference_catalog,
+        reference_prepared=reference_prepared,
+    )
+
+
+def _track_spherical_sequence(
+    sequence: DetectionSequence,
+    calibration: GridCalibration,
+    config: SphericalTrackingConfig,
+) -> ImagePlaneTrackingResult:
+    """Build and log Grid-aware spherical temporal tracklets."""
+    result = SphericalTracker(config).track(sequence, calibration)
+    logger.info(
+        "Built %d spherical temporal tracklets from %d images and %d detections",
+        len(result.tracks),
+        len(sequence.epochs),
+        sequence.total_detections,
+    )
+    population = track_population_diagnostics(result)
+    logger.info(
+        "Spherical track population | length min %d | median %.1f | p90 %.1f | "
+        "max %d | duration median %.1f min | p90 %.1f min | max %.1f min | "
+        "median epoch coverage %.1f%%",
+        population.min_length,
+        population.median_length,
+        population.p90_length,
+        population.max_length,
+        population.median_duration_s / 60.0,
+        population.p90_duration_s / 60.0,
+        population.max_duration_s / 60.0,
+        100.0 * population.median_coverage_fraction,
+    )
+    return result
 
 
 def _log_sequence_timing(sequence: DetectionSequence) -> None:
@@ -471,6 +599,594 @@ def _prepare_cached_reference(
     )
 
 
+
+def _prepare_multichannel_report_reference(
+    sequence: DetectionSequence,
+    reference_path: Path,
+    detector: IndependentChannelSEPDetector,
+    *,
+    frame_loader: FrameLoader = load_gonet_image,
+) -> tuple[PreparedDetectionImage, DetectionCatalog]:
+    """Prepare report masks matching the independent-channel science path."""
+    frame = frame_loader(reference_path)
+    prepared = detector.prepare_report_image(frame)
+    catalog = sequence.catalog_for(str(reference_path))
+    if catalog is None:
+        raise ValueError(
+            f"Detection product is missing the catalog for report image {reference_path}"
+        )
+    return prepared, catalog
+
+
+
+def _run_grid_cli_workflow(
+    files: Iterable[Path],
+    *,
+    discovered_files: tuple[Path, ...],
+    algorithm: str,
+    detection_config: DetectionConfig,
+    tracking_config: TrackingConfig,
+    channel: GONetChannel,
+    output_path: Path,
+    reference_image_path: Path | None,
+    store: ProductStore,
+    overwrite_products: bool,
+    grid_calibration_path: Path,
+    field_mask_path: Path | None,
+    multichannel_config: MultiChannelSEPConfig | None,
+    spherical_tracking_config: SphericalTrackingConfig | None,
+    stellar_merge_config: StellarTrackMergeConfig | None,
+    sidereal_config: SiderealFitConfig | None,
+    overwrite_solution: bool,
+    detection_only: bool,
+    solve_orientation: bool,
+    orientation_config: OrientationFitConfig | None,
+    catalog_cache_path: Path | None,
+    overwrite_orientation: bool,
+    metadata_loader: MetadataLoader,
+) -> RunSummary:
+    """Run the Grid-assisted multichannel/spherical stellar pipeline."""
+    if algorithm != "sep":
+        raise ValueError(
+            "Grid-assisted stellar tracking currently requires --algorithm sep"
+        )
+    if detection_only and solve_orientation:
+        raise ValueError("--solve-orientation cannot be used with --detection-only")
+
+    grid_path = Path(grid_calibration_path).expanduser().resolve()
+    grid_calibration = load_grid_calibration(grid_path)
+    resolved_field_mask_path = (
+        Path(field_mask_path).expanduser().resolve()
+        if field_mask_path is not None
+        else None
+    )
+    field_mask = (
+        load_field_mask(resolved_field_mask_path)
+        if resolved_field_mask_path is not None
+        else None
+    )
+    if field_mask is not None:
+        field_mask.validate_against(
+            grid_calibration.image_shape,
+            grid_calibration.coordinate_convention,
+        )
+        logger.info(
+            "Using field mask %s | %.2f%% of sensor pixels excluded%s",
+            resolved_field_mask_path,
+            100.0 * field_mask.excluded_fraction,
+            f" | {field_mask.description}" if field_mask.description else "",
+        )
+    multi_config = multichannel_config or MultiChannelSEPConfig()
+    spherical_config = spherical_tracking_config or SphericalTrackingConfig()
+    merge_config = stellar_merge_config or StellarTrackMergeConfig()
+    sidereal_fit_config = sidereal_config or SiderealFitConfig()
+    report_detector = IndependentChannelSEPDetector(
+        grid_calibration,
+        detection_config,
+        multi_config,
+        field_mask=field_mask,
+    )
+
+    expected_detection_id = multichannel_detection_product_id(
+        files,
+        detection_config,
+        multi_config,
+        grid_path,
+        tracking_config.location_tolerance_m,
+        field_mask_path=resolved_field_mask_path,
+    )
+    detection_product: DetectionProduct | None = None
+    reused_detection = False
+    detected: DetectionRunArtifacts | None = None
+
+    if store.detections_path.exists() and not overwrite_products:
+        try:
+            detection_product = load_detection_product(
+                store.detections_path,
+                expected_product_id=expected_detection_id,
+            )
+            reused_detection = True
+            logger.info(
+                "Reusing multichannel detection product %s | %d images | "
+                "%d detections | %d skipped before detection",
+                store.detections_path,
+                len(detection_product.sequence.epochs),
+                detection_product.sequence.total_detections,
+                detection_product.skipped_file_count,
+            )
+        except ProductError as exc:
+            logger.warning(
+                "Ignoring incompatible detection product %s: %s",
+                store.detections_path,
+                exc,
+            )
+
+    if detection_product is None:
+        preflight = preflight_tracking_locations(
+            files,
+            tracking_config.location_tolerance_m,
+            metadata_loader=metadata_loader,
+        )
+        _log_location_preflight(preflight)
+        if not preflight.files:
+            raise ValueError("No usable images remain after GPS/location preflight")
+        detected = execute_multichannel_detection_run(
+            preflight.files,
+            detection_config,
+            multi_config,
+            grid_calibration,
+            location_tolerance_m=tracking_config.location_tolerance_m,
+            detector=report_detector,
+        )
+        detection_product = DetectionProduct(
+            product_id=expected_detection_id,
+            algorithm=detected.algorithm,
+            detection_config=detection_config,
+            location_tolerance_m=tracking_config.location_tolerance_m,
+            sequence=detected.sequence,
+            reference_path=detected.reference_path,
+            discovered_files=discovered_files,
+            zero_gps_files=tuple(item.path for item in preflight.selection.zero_gps),
+            location_outlier_files=tuple(
+                item.path for item in preflight.selection.outliers
+            ),
+            metadata_errors=preflight.metadata_errors,
+        )
+        written_detection = save_detection_product(
+            store.detections_path,
+            detection_product,
+        )
+        logger.info(
+            "Wrote multichannel detection product %s | %d images | %d detections",
+            written_detection,
+            len(detection_product.sequence.epochs),
+            detection_product.sequence.total_detections,
+        )
+    else:
+        detection_product.sequence.validate_locations(
+            tracking_config.location_tolerance_m
+        )
+        _log_sequence_timing(detection_product.sequence)
+
+    report_reference_path = _resolve_report_reference_path(
+        detection_product.sequence,
+        detection_product.reference_path,
+        reference_image_path,
+    )
+    if (
+        detected is not None
+        and report_reference_path == detection_product.reference_path
+    ):
+        reference_prepared = detected.reference_prepared
+        reference_catalog = detected.reference_catalog
+    else:
+        reference_prepared, reference_catalog = (
+            _prepare_multichannel_report_reference(
+                detection_product.sequence,
+                report_reference_path,
+                report_detector,
+            )
+        )
+    if reference_image_path is not None:
+        logger.info("Using report reference image %s", report_reference_path)
+
+    result = ImagePlaneTrackingResult(detection_product.sequence, ())
+    temporal_product: TemporalTrackingProduct | None = None
+    stellar_product: StellarTrackingProduct | None = None
+    sidereal_solution: SiderealRotationSolution | None = None
+    orientation_solution: AbsoluteOrientationSolution | None = None
+    orientation_fit_config: OrientationFitConfig | None = None
+
+    tracking_product_path: Path | None = None
+    temporal_tracking_product_path: Path | None = None
+    stellar_tracking_product_path: Path | None = None
+    sidereal_product_path: Path | None = None
+    orientation_product_path: Path | None = None
+
+    reused_temporal = False
+    reused_stellar = False
+    reused_sidereal = False
+    reused_orientation = False
+
+    if detection_only:
+        logger.info(
+            "Detection-only run requested; skipping spherical tracking, stellar "
+            "merging, sidereal fitting, and absolute orientation"
+        )
+    elif len(detection_product.sequence.epochs) < spherical_config.min_track_length:
+        logger.info(
+            "Skipping spherical tracking: %d images are available, but "
+            "spherical min_track_length=%d",
+            len(detection_product.sequence.epochs),
+            spherical_config.min_track_length,
+        )
+    else:
+        expected_temporal_id = spherical_tracking_product_id(
+            detection_product.product_id,
+            grid_path,
+            spherical_config,
+        )
+        if (
+            reused_detection
+            and store.temporal_tracks_path.exists()
+            and not overwrite_products
+        ):
+            try:
+                temporal_product = load_temporal_tracking_product(
+                    store.temporal_tracks_path,
+                    detection_product.sequence,
+                    expected_product_id=expected_temporal_id,
+                    expected_detection_product_id=detection_product.product_id,
+                )
+                reused_temporal = True
+                logger.info(
+                    "Reusing spherical temporal tracks %s | %d tracklets",
+                    store.temporal_tracks_path,
+                    len(temporal_product.result.tracks),
+                )
+            except ProductError as exc:
+                logger.warning(
+                    "Ignoring incompatible temporal track product %s: %s",
+                    store.temporal_tracks_path,
+                    exc,
+                )
+
+        if temporal_product is None:
+            temporal_result = _track_spherical_sequence(
+                detection_product.sequence,
+                grid_calibration,
+                spherical_config,
+            )
+            temporal_product = TemporalTrackingProduct(
+                product_id=expected_temporal_id,
+                detection_product_id=detection_product.product_id,
+                grid_calibration_path=grid_path,
+                tracking_config=spherical_config,
+                result=temporal_result,
+            )
+            written_temporal = save_temporal_tracking_product(
+                store.temporal_tracks_path,
+                temporal_product,
+            )
+            logger.info(
+                "Wrote spherical temporal tracks %s | %d tracklets",
+                written_temporal,
+                len(temporal_result.tracks),
+            )
+
+        result = temporal_product.result
+        tracking_product_path = store.temporal_tracks_path.resolve()
+        temporal_tracking_product_path = store.temporal_tracks_path.resolve()
+
+        sidereal_fitter = SiderealAxisFitter(sidereal_fit_config)
+        fit_candidate_count = (
+            sidereal_fitter.fit_candidate_count(
+                temporal_product.result,
+                grid_calibration,
+            )
+            if temporal_product.result.tracks
+            else 0
+        )
+        if fit_candidate_count < 3:
+            logger.info(
+                "Skipping stellar merge and sidereal fit: only %d temporal tracks "
+                "satisfy the sidereal fit requirements; at least 3 are required",
+                fit_candidate_count,
+            )
+        else:
+            expected_stellar_id = stellar_tracking_product_id(
+                temporal_product.product_id,
+                merge_config,
+                sidereal_fit_config,
+            )
+            merge_result: StellarTrackMergeResult | None = None
+            if (
+                reused_temporal
+                and store.stellar_tracks_path.exists()
+                and not overwrite_products
+                and not overwrite_solution
+            ):
+                try:
+                    stellar_product = load_stellar_tracking_product(
+                        store.stellar_tracks_path,
+                        detection_product.sequence,
+                        expected_product_id=expected_stellar_id,
+                        expected_temporal_tracking_product_id=(
+                            temporal_product.product_id
+                        ),
+                    )
+                    reused_stellar = True
+                    logger.info(
+                        "Reusing merged stellar tracks %s | %d physical stars",
+                        store.stellar_tracks_path,
+                        len(stellar_product.result.tracks),
+                    )
+                except ProductError as exc:
+                    logger.warning(
+                        "Ignoring incompatible stellar track product %s: %s",
+                        store.stellar_tracks_path,
+                        exc,
+                    )
+
+            if stellar_product is None:
+                merge_result = SiderealTrackMerger(
+                    merge_config,
+                    sidereal_fit_config,
+                ).fit_and_merge(
+                    temporal_product.result,
+                    grid_calibration,
+                )
+                stellar_product = StellarTrackingProduct(
+                    product_id=expected_stellar_id,
+                    temporal_tracking_product_id=temporal_product.product_id,
+                    grid_calibration_path=grid_path,
+                    merge_config=merge_config,
+                    sidereal_config=sidereal_fit_config,
+                    reference_time=merge_result.reference_time,
+                    source_fragment_ids=merge_result.source_fragment_ids,
+                    result=merge_result.tracking,
+                )
+                written_stellar = save_stellar_tracking_product(
+                    store.stellar_tracks_path,
+                    stellar_product,
+                )
+                logger.info(
+                    "Wrote merged stellar tracks %s | %d physical stars",
+                    written_stellar,
+                    len(stellar_product.result.tracks),
+                )
+
+            result = stellar_product.result
+            tracking_product_path = store.stellar_tracks_path.resolve()
+            stellar_tracking_product_path = store.stellar_tracks_path.resolve()
+
+            expected_sidereal_id = sidereal_product_id(
+                stellar_product.product_id,
+                grid_path,
+                sidereal_fit_config,
+            )
+            sidereal_product: SiderealProduct | None = None
+            if (
+                reused_stellar
+                and store.sidereal_path.exists()
+                and not overwrite_products
+                and not overwrite_solution
+            ):
+                try:
+                    sidereal_product = load_sidereal_product(
+                        store.sidereal_path,
+                        expected_product_id=expected_sidereal_id,
+                        expected_tracking_product_id=stellar_product.product_id,
+                    )
+                    reused_sidereal = True
+                    logger.info(
+                        "Reusing sidereal product %s | axis r=%.4f deg "
+                        "theta=%.4f deg | fit RMS %.4f deg",
+                        store.sidereal_path,
+                        sidereal_product.solution.axis_r_deg,
+                        sidereal_product.solution.axis_theta_deg,
+                        sidereal_product.solution.fit_rms_deg,
+                    )
+                except ProductError as exc:
+                    logger.warning(
+                        "Ignoring incompatible sidereal product %s: %s",
+                        store.sidereal_path,
+                        exc,
+                    )
+
+            if sidereal_product is None:
+                sidereal_solution = (
+                    merge_result.final_solution
+                    if merge_result is not None
+                    else sidereal_fitter.fit(
+                        stellar_product.result,
+                        grid_calibration,
+                    )
+                )
+                sidereal_product = SiderealProduct(
+                    product_id=expected_sidereal_id,
+                    tracking_product_id=stellar_product.product_id,
+                    grid_calibration_path=grid_path,
+                    fit_config=sidereal_fit_config,
+                    solution=sidereal_solution,
+                )
+                written_sidereal = save_sidereal_product(
+                    store.sidereal_path,
+                    sidereal_product,
+                )
+                counts = sidereal_solution.diagnostic_counts()
+                logger.info(
+                    "Wrote sidereal product %s | axis r=%.4f deg theta=%.4f deg | "
+                    "fit RMS %.4f deg | %d consistent | %d rejected | "
+                    "%d insufficient",
+                    written_sidereal,
+                    sidereal_solution.axis_r_deg,
+                    sidereal_solution.axis_theta_deg,
+                    sidereal_solution.fit_rms_deg,
+                    counts["sidereal-consistent"],
+                    counts["sidereal-rejected"],
+                    counts["insufficient"],
+                )
+            else:
+                sidereal_solution = sidereal_product.solution
+            sidereal_product_path = store.sidereal_path.resolve()
+
+            if solve_orientation:
+                orientation_fit_config = orientation_config or OrientationFitConfig()
+                cache_path = (
+                    (catalog_cache_path or store.bright_star_catalog_path)
+                    .expanduser()
+                    .resolve()
+                )
+                catalog_was_cached = cache_path.exists()
+                bright_catalog = load_or_fetch_bright_star_catalog(cache_path)
+                if catalog_was_cached:
+                    logger.info("Reusing bright-star catalog cache %s", cache_path)
+                else:
+                    logger.info(
+                        "Fetched and cached Bright Star Catalogue %s | %d stars",
+                        cache_path,
+                        len(bright_catalog.stars),
+                    )
+
+                expected_orientation_id = orientation_product_id(
+                    expected_sidereal_id,
+                    cache_path,
+                    orientation_fit_config,
+                )
+                orientation_product: OrientationProduct | None = None
+                if (
+                    reused_sidereal
+                    and store.orientation_path.exists()
+                    and not overwrite_products
+                    and not overwrite_solution
+                    and not overwrite_orientation
+                ):
+                    try:
+                        orientation_product = load_orientation_product(
+                            store.orientation_path,
+                            expected_product_id=expected_orientation_id,
+                            expected_sidereal_product_id=expected_sidereal_id,
+                        )
+                        reused_orientation = True
+                        logger.info(
+                            "Reusing orientation product %s | optical axis "
+                            "az=%.3f deg alt=%.3f deg | %d catalog matches",
+                            store.orientation_path,
+                            orientation_product.solution.optical_axis_azimuth_deg,
+                            orientation_product.solution.optical_axis_altitude_deg,
+                            len(orientation_product.solution.matches),
+                        )
+                    except ProductError as exc:
+                        logger.warning(
+                            "Ignoring incompatible orientation product %s: %s",
+                            store.orientation_path,
+                            exc,
+                        )
+
+                if orientation_product is None:
+                    bright_stars = bright_catalog.query_bright_stars(
+                        detection_product.sequence.epochs[0].exposure_midpoint,
+                        orientation_fit_config.limiting_magnitude,
+                    )
+                    orientation_solution = AbsoluteOrientationSolver(
+                        orientation_fit_config
+                    ).fit(
+                        stellar_product.result,
+                        sidereal_solution,
+                        grid_calibration,
+                        bright_stars,
+                    )
+                    orientation_product = OrientationProduct(
+                        product_id=expected_orientation_id,
+                        sidereal_product_id=expected_sidereal_id,
+                        catalog_path=cache_path,
+                        fit_config=orientation_fit_config,
+                        solution=orientation_solution,
+                    )
+                    written_orientation = save_orientation_product(
+                        store.orientation_path,
+                        orientation_product,
+                    )
+                    logger.info(
+                        "Wrote orientation product %s | optical axis az=%.3f deg "
+                        "alt=%.3f deg | twist %.3f deg | %d matches | median "
+                        "residual %.3f arcmin",
+                        written_orientation,
+                        orientation_solution.optical_axis_azimuth_deg,
+                        orientation_solution.optical_axis_altitude_deg,
+                        orientation_solution.twist_deg,
+                        len(orientation_solution.matches),
+                        60.0 * orientation_solution.fit_median_deg,
+                    )
+                else:
+                    orientation_solution = orientation_product.solution
+                orientation_product_path = store.orientation_path.resolve()
+
+    if solve_orientation and sidereal_solution is None:
+        raise ValueError(
+            "Absolute orientation requires a successful sidereal solution; "
+            "provide a longer sequence or relax the sidereal fit requirements"
+        )
+
+    artifacts = TrackingRunArtifacts(
+        files=tuple(epoch.source_path for epoch in detection_product.sequence.epochs),
+        algorithm=detection_product.algorithm,
+        sequence=detection_product.sequence,
+        tracking_result=result,
+        reference_path=report_reference_path,
+        reference_catalog=reference_catalog,
+        reference_prepared=reference_prepared,
+        grid_calibration=grid_calibration,
+        sidereal_solution=sidereal_solution,
+        sidereal_fit_config=sidereal_fit_config,
+        multichannel_detection_config=multi_config,
+        spherical_tracking_config=spherical_config,
+        stellar_merge_config=merge_config,
+        orientation_solution=orientation_solution,
+        orientation_fit_config=orientation_fit_config,
+    )
+    raw = load_gonet_file_raw(artifacts.reference_path, parse_metadata=False)
+    display_data = get_raw_channel(raw, channel)
+    written = write_tracking_report_pdf(
+        output_path,
+        image_data=display_data,
+        channel=channel,
+        artifacts=artifacts,
+        detection_config=detection_config,
+        tracking_config=tracking_config,
+    )
+
+    return RunSummary(
+        output_path=written,
+        file_count=len(artifacts.files),
+        detection_count=artifacts.sequence.total_detections,
+        track_count=len(result.tracks),
+        assigned_detection_count=result.assigned_detection_count,
+        unassigned_detection_count=result.unassigned_detection_count,
+        skipped_file_count=detection_product.skipped_file_count,
+        zero_gps_count=len(detection_product.zero_gps_files),
+        location_outlier_count=len(detection_product.location_outlier_files),
+        metadata_error_count=len(detection_product.metadata_errors),
+        detection_product_path=store.detections_path.resolve(),
+        tracking_product_path=tracking_product_path,
+        temporal_tracking_product_path=temporal_tracking_product_path,
+        stellar_tracking_product_path=stellar_tracking_product_path,
+        sidereal_product_path=sidereal_product_path,
+        orientation_product_path=orientation_product_path,
+        reused_detection_product=reused_detection,
+        reused_tracking_product=(
+            reused_stellar
+            if stellar_tracking_product_path is not None
+            else reused_temporal
+        ),
+        reused_temporal_tracking_product=reused_temporal,
+        reused_stellar_tracking_product=reused_stellar,
+        reused_sidereal_product=reused_sidereal,
+        reused_orientation_product=reused_orientation,
+    )
+
+
 def run_cli_workflow(
     inputs: Iterable[Path],
     *,
@@ -484,8 +1200,13 @@ def run_cli_workflow(
     output_dir: Path | None = None,
     overwrite_products: bool = False,
     grid_calibration_path: Path | None = None,
+    field_mask_path: Path | None = None,
+    multichannel_config: MultiChannelSEPConfig | None = None,
+    spherical_tracking_config: SphericalTrackingConfig | None = None,
+    stellar_merge_config: StellarTrackMergeConfig | None = None,
     sidereal_config: SiderealFitConfig | None = None,
     overwrite_solution: bool = False,
+    detection_only: bool = False,
     solve_orientation: bool = False,
     orientation_config: OrientationFitConfig | None = None,
     catalog_cache_path: Path | None = None,
@@ -511,14 +1232,50 @@ def run_cli_workflow(
             "Unsupported explicit files: %s",
             ", ".join(str(path) for path in discovery.unsupported),
         )
-    if len(discovery.files) < 2:
+    if not discovery.files:
+        raise ValueError("The run command requires at least one candidate GONet image")
+    if detection_only and grid_calibration_path is None:
+        raise ValueError("--detection-only requires --grid-calibration")
+    if grid_calibration_path is None and len(discovery.files) < 2:
         raise ValueError(
-            "Tracking requires at least two candidate GONet images after discovery"
+            "Legacy image-plane tracking requires at least two candidate GONet "
+            "images after discovery"
         )
 
     product_dir = (output_dir or output_path.parent).expanduser().resolve()
     store = ProductStore(product_dir)
     store.ensure()
+
+    if field_mask_path is not None and grid_calibration_path is None:
+        raise ValueError("--field-mask requires --grid-calibration")
+
+    if grid_calibration_path is not None:
+        return _run_grid_cli_workflow(
+            discovery.files,
+            discovered_files=tuple(discovery.files),
+            algorithm=algorithm,
+            detection_config=detection_config,
+            tracking_config=tracking_config,
+            channel=channel,
+            output_path=output_path,
+            reference_image_path=reference_image_path,
+            store=store,
+            overwrite_products=overwrite_products,
+            grid_calibration_path=grid_calibration_path,
+            field_mask_path=field_mask_path,
+            multichannel_config=multichannel_config,
+            spherical_tracking_config=spherical_tracking_config,
+            stellar_merge_config=stellar_merge_config,
+            sidereal_config=sidereal_config,
+            overwrite_solution=overwrite_solution,
+            detection_only=detection_only,
+            solve_orientation=solve_orientation,
+            orientation_config=orientation_config,
+            catalog_cache_path=catalog_cache_path,
+            overwrite_orientation=overwrite_orientation,
+            metadata_loader=metadata_loader,
+        )
+
     expected_detection_id = detection_product_id(
         discovery.files,
         algorithm,
@@ -625,11 +1382,7 @@ def run_cli_workflow(
     )
     tracking_product: TrackingProduct | None = None
     reused_tracking = False
-    if (
-        reused_detection
-        and store.tracks_path.exists()
-        and not overwrite_products
-    ):
+    if reused_detection and store.tracks_path.exists() and not overwrite_products:
         try:
             tracking_product = load_tracking_product(
                 store.tracks_path,
@@ -651,9 +1404,7 @@ def run_cli_workflow(
             )
 
     if tracking_product is None:
-        tracking_result = _track_sequence(
-            detection_product.sequence, tracking_config
-        )
+        tracking_result = _track_sequence(detection_product.sequence, tracking_config)
         tracking_product = TrackingProduct(
             product_id=expected_tracking_id,
             detection_product_id=detection_product.product_id,
@@ -667,180 +1418,8 @@ def run_cli_workflow(
             len(tracking_result.tracks),
         )
 
-    grid_calibration: GridCalibration | None = None
-    sidereal_solution: SiderealRotationSolution | None = None
-    sidereal_fit_config: SiderealFitConfig | None = None
-    orientation_solution: AbsoluteOrientationSolution | None = None
-    orientation_fit_config: OrientationFitConfig | None = None
-    sidereal_product_path: Path | None = None
-    orientation_product_path: Path | None = None
-    current_sidereal_product_id: str | None = None
-    reused_sidereal = False
-    if grid_calibration_path is not None:
-        sidereal_fit_config = sidereal_config or SiderealFitConfig()
-        grid_path = Path(grid_calibration_path).expanduser().resolve()
-        grid_calibration = load_grid_calibration(grid_path)
-        expected_sidereal_id = sidereal_product_id(
-            tracking_product.product_id,
-            grid_path,
-            sidereal_fit_config,
-        )
-        current_sidereal_product_id = expected_sidereal_id
-        sidereal_product: SiderealProduct | None = None
-        if (
-            reused_tracking
-            and store.sidereal_path.exists()
-            and not overwrite_products
-            and not overwrite_solution
-        ):
-            try:
-                sidereal_product = load_sidereal_product(
-                    store.sidereal_path,
-                    expected_product_id=expected_sidereal_id,
-                    expected_tracking_product_id=tracking_product.product_id,
-                )
-                reused_sidereal = True
-                logger.info(
-                    "Reusing sidereal product %s | axis r=%.4f deg theta=%.4f deg | "
-                    "fit RMS %.4f deg",
-                    store.sidereal_path,
-                    sidereal_product.solution.axis_r_deg,
-                    sidereal_product.solution.axis_theta_deg,
-                    sidereal_product.solution.fit_rms_deg,
-                )
-            except ProductError as exc:
-                logger.warning(
-                    "Ignoring incompatible sidereal product %s: %s",
-                    store.sidereal_path,
-                    exc,
-                )
-        if sidereal_product is None:
-            sidereal_solution = SiderealAxisFitter(sidereal_fit_config).fit(
-                tracking_product.result,
-                grid_calibration,
-            )
-            sidereal_product = SiderealProduct(
-                product_id=expected_sidereal_id,
-                tracking_product_id=tracking_product.product_id,
-                grid_calibration_path=grid_path,
-                fit_config=sidereal_fit_config,
-                solution=sidereal_solution,
-            )
-            written_sidereal = save_sidereal_product(
-                store.sidereal_path, sidereal_product
-            )
-            counts = sidereal_solution.diagnostic_counts()
-            logger.info(
-                "Wrote sidereal product %s | axis r=%.4f deg theta=%.4f deg | "
-                "fit RMS %.4f deg | %d consistent | %d rejected | %d insufficient",
-                written_sidereal,
-                sidereal_solution.axis_r_deg,
-                sidereal_solution.axis_theta_deg,
-                sidereal_solution.fit_rms_deg,
-                counts["sidereal-consistent"],
-                counts["sidereal-rejected"],
-                counts["insufficient"],
-            )
-        else:
-            sidereal_solution = sidereal_product.solution
-        sidereal_product_path = store.sidereal_path.resolve()
-
-    reused_orientation = False
     if solve_orientation:
-        if (
-            grid_calibration is None
-            or sidereal_solution is None
-            or current_sidereal_product_id is None
-        ):
-            raise ValueError(
-                "Absolute orientation requires --grid-calibration and a "
-                "sidereal solution"
-            )
-        orientation_fit_config = orientation_config or OrientationFitConfig()
-        cache_path = (
-            catalog_cache_path or store.bright_star_catalog_path
-        ).expanduser().resolve()
-        catalog_was_cached = cache_path.exists()
-        bright_catalog = load_or_fetch_bright_star_catalog(cache_path)
-        if catalog_was_cached:
-            logger.info("Reusing bright-star catalog cache %s", cache_path)
-        else:
-            logger.info(
-                "Fetched and cached Bright Star Catalogue %s | %d stars",
-                cache_path,
-                len(bright_catalog.stars),
-            )
-        expected_orientation_id = orientation_product_id(
-            current_sidereal_product_id,
-            cache_path,
-            orientation_fit_config,
-        )
-        orientation_product: OrientationProduct | None = None
-        if (
-            reused_sidereal
-            and store.orientation_path.exists()
-            and not overwrite_products
-            and not overwrite_solution
-            and not overwrite_orientation
-        ):
-            try:
-                orientation_product = load_orientation_product(
-                    store.orientation_path,
-                    expected_product_id=expected_orientation_id,
-                    expected_sidereal_product_id=current_sidereal_product_id,
-                )
-                reused_orientation = True
-                logger.info(
-                    "Reusing orientation product %s | optical axis az=%.3f deg "
-                    "alt=%.3f deg | %d catalog matches",
-                    store.orientation_path,
-                    orientation_product.solution.optical_axis_azimuth_deg,
-                    orientation_product.solution.optical_axis_altitude_deg,
-                    len(orientation_product.solution.matches),
-                )
-            except ProductError as exc:
-                logger.warning(
-                    "Ignoring incompatible orientation product %s: %s",
-                    store.orientation_path,
-                    exc,
-                )
-        if orientation_product is None:
-            bright_stars = bright_catalog.query_bright_stars(
-                detection_product.sequence.epochs[0].exposure_midpoint,
-                orientation_fit_config.limiting_magnitude,
-            )
-            orientation_solution = AbsoluteOrientationSolver(
-                orientation_fit_config
-            ).fit(
-                tracking_product.result,
-                sidereal_solution,
-                grid_calibration,
-                bright_stars,
-            )
-            orientation_product = OrientationProduct(
-                product_id=expected_orientation_id,
-                sidereal_product_id=current_sidereal_product_id,
-                catalog_path=cache_path,
-                fit_config=orientation_fit_config,
-                solution=orientation_solution,
-            )
-            written_orientation = save_orientation_product(
-                store.orientation_path, orientation_product
-            )
-            logger.info(
-                "Wrote orientation product %s | optical axis az=%.3f deg "
-                "alt=%.3f deg | twist %.3f deg | %d matches | median residual "
-                "%.3f arcmin",
-                written_orientation,
-                orientation_solution.optical_axis_azimuth_deg,
-                orientation_solution.optical_axis_altitude_deg,
-                orientation_solution.twist_deg,
-                len(orientation_solution.matches),
-                60.0 * orientation_solution.fit_median_deg,
-            )
-        else:
-            orientation_solution = orientation_product.solution
-        orientation_product_path = store.orientation_path.resolve()
+        raise ValueError("Absolute orientation requires --grid-calibration")
 
     artifacts = TrackingRunArtifacts(
         files=tuple(epoch.source_path for epoch in detection_product.sequence.epochs),
@@ -850,11 +1429,6 @@ def run_cli_workflow(
         reference_path=report_reference_path,
         reference_catalog=reference_catalog,
         reference_prepared=reference_prepared,
-        grid_calibration=grid_calibration,
-        sidereal_solution=sidereal_solution,
-        sidereal_fit_config=sidereal_fit_config,
-        orientation_solution=orientation_solution,
-        orientation_fit_config=orientation_fit_config,
     )
     raw = load_gonet_file_raw(artifacts.reference_path, parse_metadata=False)
     display_data = get_raw_channel(raw, channel)
@@ -880,10 +1454,6 @@ def run_cli_workflow(
         metadata_error_count=len(detection_product.metadata_errors),
         detection_product_path=store.detections_path.resolve(),
         tracking_product_path=store.tracks_path.resolve(),
-        sidereal_product_path=sidereal_product_path,
-        orientation_product_path=orientation_product_path,
         reused_detection_product=reused_detection,
         reused_tracking_product=reused_tracking,
-        reused_sidereal_product=reused_sidereal,
-        reused_orientation_product=reused_orientation,
     )

@@ -301,10 +301,15 @@ def test_detection_epoch_from_frame_falls_back_to_identifier_path() -> None:
     assert epoch.image_shape == (4, 6)
 
 
-def test_detection_sequence_rejects_too_few_duplicate_ids_and_orientation() -> None:
+def test_detection_sequence_rejects_empty_duplicate_ids_and_orientation() -> None:
     first = _epoch(0, 0.0, ())
-    with pytest.raises(ValueError, match="at least two"):
-        DetectionSequence((first,))
+    with pytest.raises(ValueError, match="at least one"):
+        DetectionSequence(())
+
+    single = DetectionSequence((first,))
+    assert single.epochs == (first,)
+    assert single.duration_seconds == pytest.approx(0.0)
+    assert single.epoch_intervals_seconds == ()
 
     duplicate_id = DetectionEpoch(
         frame_identifier=first.frame_identifier,

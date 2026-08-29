@@ -92,6 +92,11 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Changed
 
+- Grid-assisted multichannel SEP detection now uses the automatically inferred
+  illuminated fisheye footprint instead of fixed 75/70-degree Grid-radius
+  cuts. ``--field-edge-threshold-fraction`` controls the image-based edge
+  estimate and ``--field-edge-keep-margin-px`` optionally requires detections
+  to lie farther inside that inferred edge.
 - Bootstrap tracking now uses elapsed exposure time as the primary gap criterion
   instead of assuming a fixed number of missing frames.
 - Long-gap prediction tolerances scale conservatively with the actual time

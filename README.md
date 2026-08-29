@@ -124,6 +124,20 @@ gonet-astrometry run /path/to/night \
     --grid-calibration /path/to/camera_calibration.npz
 ```
 
+In the Grid-assisted multichannel SEP path, the usable fisheye edge is inferred
+from each image by default. ``--field-edge-threshold-fraction`` controls the
+image-contrast threshold for that footprint, while
+``--field-edge-keep-margin-px`` can require accepted detections to lie farther
+inside the inferred edge. The latter defaults to zero; the existing conservative
+``--footprint-erosion-px`` remains part of the automatic footprint estimate.
+Optional ``--grid-search-radius-deg`` and ``--grid-acceptance-radius-deg`` caps
+can further restrict the search and retained-detection regions in Grid angular
+coordinates. To reproduce the historical 75/70-degree behavior exactly, disable
+the automatic footprint with ``--no-use-provisional-field-mask`` and pass
+``--grid-search-radius-deg 75 --grid-acceptance-radius-deg 70``. An optional
+portable ``--field-mask`` can additionally exclude fixed structures such as the
+Adler dome.
+
 The PDF background normally uses the detection product's original reference
 image. Choose any other retained epoch without recomputing scientific products
 with ``--reference-image /path/to/frame.jpg``. The selected file only changes

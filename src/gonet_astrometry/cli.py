@@ -10,13 +10,19 @@ from pathlib import Path
 from gonet_astrometry import __version__
 from gonet_astrometry.adapters.gonet_wizard import GONET_CHANNELS
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.detection.registry import DETECTOR_SPECS
 from gonet_astrometry.solving.orientation import OrientationFitConfig
 from gonet_astrometry.solving.sidereal import SiderealFitConfig
+from gonet_astrometry.solving.stellar_tracks import StellarTrackMergeConfig
 from gonet_astrometry.tracking.config import TrackingConfig
+from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
 
 _DETECTION_DEFAULTS = DetectionConfig()
 _TRACKING_DEFAULTS = TrackingConfig()
+_MULTICHANNEL_DEFAULTS = MultiChannelSEPConfig()
+_SPHERICAL_DEFAULTS = SphericalTrackingConfig()
+_STELLAR_MERGE_DEFAULTS = StellarTrackMergeConfig()
 _SIDEREAL_DEFAULTS = SiderealFitConfig()
 _ORIENTATION_DEFAULTS = OrientationFitConfig()
 
@@ -69,7 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--algorithm",
         required=True,
         choices=[spec.identifier for spec in DETECTOR_SPECS],
-        help="Source-detection backend to run on every image.",
+        help=(
+            "Source-detection backend. With --grid-calibration the stellar "
+            "pipeline currently requires 'sep' and runs it independently on "
+            "the four native Bayer channels."
+        ),
     )
     run.add_argument(
         "--recursive",
@@ -125,15 +135,35 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Portable Grid Calibration *_calibration.npz artifact. When supplied, "
-            "fit a common fixed-rate sidereal rotation axis after tracking."
+            "use independent-channel SEP detection, spherical temporal tracking, "
+            "sidereal fragment merging, and the final fixed-rate sidereal fit."
+        ),
+    )
+    run.add_argument(
+        "--field-mask",
+        type=Path,
+        default=None,
+        help=(
+            "Optional portable full-sensor exclusion mask. True/masked pixels "
+            "are removed before multichannel background estimation and source "
+            "detection. Requires --grid-calibration."
+        ),
+    )
+    run.add_argument(
+        "--detection-only",
+        action="store_true",
+        help=(
+            "Stop after source detection. Skip spherical temporal tracking, "
+            "stellar merging, sidereal fitting, and absolute orientation. "
+            "Grid-assisted runs may therefore operate on a single image."
         ),
     )
     run.add_argument(
         "--overwrite-solution",
         action="store_true",
         help=(
-            "Recompute only the Grid-calibrated sidereal solution while retaining "
-            "compatible detection and tracking products."
+            "Recompute the stellar fragment merge and final sidereal solution while "
+            "retaining compatible detections and spherical temporal tracks."
         ),
     )
     run.add_argument(
@@ -164,6 +194,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_detection_arguments(run)
     _add_tracking_arguments(run)
+    _add_multichannel_arguments(run)
+    _add_spherical_tracking_arguments(run)
+    _add_stellar_merge_arguments(run)
     _add_sidereal_arguments(run)
     _add_orientation_arguments(run)
     return parser
@@ -222,9 +255,15 @@ def _add_detection_arguments(parser: argparse.ArgumentParser) -> None:
         default=_DETECTION_DEFAULTS.use_provisional_field_mask,
     )
     parser.add_argument(
+        "--field-edge-threshold-fraction",
         "--footprint-threshold-fraction",
+        dest="footprint_threshold_fraction",
         type=float,
         default=_DETECTION_DEFAULTS.footprint_threshold_fraction,
+        help=(
+            "Fraction of center-to-corner image contrast used to infer the "
+            "illuminated fisheye edge (default: %(default)s)."
+        ),
     )
     parser.add_argument(
         "--footprint-smoothing-px",
@@ -317,6 +356,183 @@ def _add_tracking_arguments(parser: argparse.ArgumentParser) -> None:
         "--location-tolerance-m",
         type=float,
         default=_TRACKING_DEFAULTS.location_tolerance_m,
+    )
+
+
+
+def _add_multichannel_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add independent native-channel SEP settings."""
+    parser.add_argument(
+        "--field-edge-keep-margin-px",
+        type=float,
+        default=_MULTICHANNEL_DEFAULTS.field_edge_keep_margin_px,
+        help=(
+            "Additional full-sensor distance required inside the automatically "
+            "detected fisheye edge before retaining a source (default: "
+            "%(default)s px)."
+        ),
+    )
+    parser.add_argument(
+        "--grid-search-radius-deg",
+        type=float,
+        default=_MULTICHANNEL_DEFAULTS.grid_search_radius_deg,
+        help=(
+            "Optional Grid-calibrated angular-radius cap for background "
+            "estimation and source detection. Omit to use only the image-driven "
+            "field edge."
+        ),
+    )
+    parser.add_argument(
+        "--grid-acceptance-radius-deg",
+        type=float,
+        default=_MULTICHANNEL_DEFAULTS.grid_acceptance_radius_deg,
+        help=(
+            "Optional Grid-calibrated angular-radius cap for retained "
+            "detections. Omit to use only the image-driven acceptance field."
+        ),
+    )
+    parser.add_argument(
+        "--multichannel-match-radius-px",
+        type=float,
+        default=_MULTICHANNEL_DEFAULTS.channel_match_radius_px,
+    )
+    parser.add_argument(
+        "--multichannel-background-box-size-px",
+        type=int,
+        default=_MULTICHANNEL_DEFAULTS.background_box_size_compact_px,
+        help="Background2D box size in compact-channel pixels.",
+    )
+    parser.add_argument(
+        "--multichannel-min-support",
+        type=int,
+        default=_MULTICHANNEL_DEFAULTS.minimum_channel_support,
+        help="Minimum native Bayer channels supporting a candidate (default: 1).",
+    )
+
+
+def _multichannel_config(arguments: argparse.Namespace) -> MultiChannelSEPConfig:
+    """Construct independent-channel detection settings."""
+    return MultiChannelSEPConfig(
+        field_edge_keep_margin_px=arguments.field_edge_keep_margin_px,
+        grid_search_radius_deg=arguments.grid_search_radius_deg,
+        grid_acceptance_radius_deg=arguments.grid_acceptance_radius_deg,
+        channel_match_radius_px=arguments.multichannel_match_radius_px,
+        background_box_size_compact_px=(
+            arguments.multichannel_background_box_size_px
+        ),
+        minimum_channel_support=arguments.multichannel_min_support,
+    )
+
+
+def _add_spherical_tracking_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add Grid-aware spherical temporal-association settings."""
+    parser.add_argument(
+        "--spherical-min-track-length",
+        type=int,
+        default=_SPHERICAL_DEFAULTS.min_track_length,
+    )
+    parser.add_argument(
+        "--spherical-max-gap-minutes",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.max_gap_minutes,
+    )
+    parser.add_argument(
+        "--spherical-single-point-max-gap-seconds",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.single_point_max_gap_seconds,
+    )
+    parser.add_argument(
+        "--spherical-max-initial-speed-deg-per-minute",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.max_initial_speed_deg_per_minute,
+    )
+    parser.add_argument(
+        "--spherical-initial-margin-arcmin",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.initial_position_margin_arcmin,
+    )
+    parser.add_argument(
+        "--spherical-prediction-tolerance-arcmin",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.prediction_tolerance_arcmin,
+    )
+    parser.add_argument(
+        "--spherical-prediction-reference-seconds",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.prediction_reference_seconds,
+    )
+    parser.add_argument(
+        "--spherical-max-prediction-tolerance-arcmin",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.max_prediction_tolerance_arcmin,
+    )
+    parser.add_argument(
+        "--spherical-velocity-fit-points",
+        type=int,
+        default=_SPHERICAL_DEFAULTS.velocity_fit_points,
+    )
+    parser.add_argument(
+        "--spherical-inverse-tolerance-px",
+        type=float,
+        default=_SPHERICAL_DEFAULTS.inverse_reprojection_tolerance_px,
+    )
+
+
+def _spherical_tracking_config(
+    arguments: argparse.Namespace,
+) -> SphericalTrackingConfig:
+    """Construct spherical temporal-association settings."""
+    return SphericalTrackingConfig(
+        min_track_length=arguments.spherical_min_track_length,
+        max_gap_minutes=arguments.spherical_max_gap_minutes,
+        single_point_max_gap_seconds=(
+            arguments.spherical_single_point_max_gap_seconds
+        ),
+        max_initial_speed_deg_per_minute=(
+            arguments.spherical_max_initial_speed_deg_per_minute
+        ),
+        initial_position_margin_arcmin=arguments.spherical_initial_margin_arcmin,
+        prediction_tolerance_arcmin=(
+            arguments.spherical_prediction_tolerance_arcmin
+        ),
+        prediction_reference_seconds=(
+            arguments.spherical_prediction_reference_seconds
+        ),
+        max_prediction_tolerance_arcmin=(
+            arguments.spherical_max_prediction_tolerance_arcmin
+        ),
+        velocity_fit_points=arguments.spherical_velocity_fit_points,
+        inverse_reprojection_tolerance_px=(
+            arguments.spherical_inverse_tolerance_px
+        ),
+    )
+
+
+def _add_stellar_merge_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add sidereal fragment-bootstrap/merge settings."""
+    parser.add_argument(
+        "--stellar-min-fragment-points",
+        type=int,
+        default=_STELLAR_MERGE_DEFAULTS.min_fragment_points,
+    )
+    parser.add_argument(
+        "--stellar-merge-radius-arcmin",
+        type=float,
+        default=60.0 * _STELLAR_MERGE_DEFAULTS.merge_radius_deg,
+    )
+    parser.add_argument(
+        "--stellar-merged-rms-arcmin",
+        type=float,
+        default=60.0 * _STELLAR_MERGE_DEFAULTS.merged_rms_deg,
+    )
+
+
+def _stellar_merge_config(arguments: argparse.Namespace) -> StellarTrackMergeConfig:
+    """Construct stellar fragment-bootstrap settings."""
+    return StellarTrackMergeConfig(
+        min_fragment_points=arguments.stellar_min_fragment_points,
+        merge_radius_deg=arguments.stellar_merge_radius_arcmin / 60.0,
+        merged_rms_deg=arguments.stellar_merged_rms_arcmin / 60.0,
     )
 
 
@@ -473,17 +689,13 @@ def _orientation_config(arguments: argparse.Namespace) -> OrientationFitConfig:
         min_track_points=arguments.orientation_min_track_points,
         min_track_duration_minutes=arguments.orientation_min_duration_minutes,
         deduplication_radius_deg=arguments.orientation_dedup_radius_deg,
-        declination_tolerance_deg=(
-            arguments.orientation_declination_tolerance_deg
-        ),
+        declination_tolerance_deg=(arguments.orientation_declination_tolerance_deg),
         consensus_bin_deg=arguments.orientation_consensus_bin_deg,
         consensus_tolerance_deg=arguments.orientation_consensus_tolerance_deg,
         match_radius_deg=arguments.orientation_match_radius_deg,
         min_matches=arguments.orientation_min_matches,
         max_anchors=arguments.orientation_max_anchors,
-        inverse_reprojection_tolerance_px=(
-            arguments.orientation_inverse_tolerance_px
-        ),
+        inverse_reprojection_tolerance_px=(arguments.orientation_inverse_tolerance_px),
         track_validation_rms_deg=arguments.orientation_track_validation_rms_deg,
         max_declination_robust_sigma_deg=(
             arguments.orientation_max_declination_robust_sigma_deg
@@ -614,23 +826,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=arguments.output_dir,
             overwrite_products=arguments.overwrite_products,
             grid_calibration_path=arguments.grid_calibration,
+            field_mask_path=arguments.field_mask,
+            multichannel_config=_multichannel_config(arguments),
+            spherical_tracking_config=_spherical_tracking_config(arguments),
+            stellar_merge_config=_stellar_merge_config(arguments),
             sidereal_config=_sidereal_config(arguments),
             overwrite_solution=arguments.overwrite_solution,
+            detection_only=arguments.detection_only,
             solve_orientation=arguments.solve_orientation,
             orientation_config=_orientation_config(arguments),
             catalog_cache_path=arguments.catalog_cache,
             overwrite_orientation=arguments.overwrite_orientation,
         )
-        detection_state = (
-            "cached" if summary.reused_detection_product else "computed"
-        )
+        detection_state = "cached" if summary.reused_detection_product else "computed"
         tracking_state = "cached" if summary.reused_tracking_product else "computed"
+        if arguments.grid_calibration is not None:
+            product_parts = [f"detections {detection_state}"]
+            if summary.temporal_tracking_product_path is not None:
+                temporal_state = (
+                    "cached"
+                    if summary.reused_temporal_tracking_product
+                    else "computed"
+                )
+                product_parts.append(f"temporal {temporal_state}")
+            if summary.stellar_tracking_product_path is not None:
+                stellar_state = (
+                    "cached" if summary.reused_stellar_tracking_product else "computed"
+                )
+                product_parts.append(f"stellar {stellar_state}")
+            product_note = " | ".join(product_parts)
+        else:
+            product_note = f"detections {detection_state} | tracks {tracking_state}"
+
         solution_note = ""
         if summary.sidereal_product_path is not None:
-            solution_state = (
-                "cached" if summary.reused_sidereal_product else "computed"
-            )
-            solution_note = f" | sidereal {solution_state}"
+            solution_state = "cached" if summary.reused_sidereal_product else "computed"
+            solution_note += f" | sidereal {solution_state}"
         if summary.orientation_product_path is not None:
             orientation_state = (
                 "cached" if summary.reused_orientation_product else "computed"
@@ -642,7 +873,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{summary.assigned_detection_count} assigned | "
             f"{summary.unassigned_detection_count} unassigned | "
             f"{summary.skipped_file_count} skipped before detection | "
-            f"detections {detection_state} | tracks {tracking_state}{solution_note}"
+            f"{product_note}{solution_note}"
         )
 
     return 0

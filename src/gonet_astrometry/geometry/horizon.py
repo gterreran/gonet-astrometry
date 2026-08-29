@@ -36,9 +36,7 @@ def ncp_enu_vector(latitude_deg: float) -> NDArray[np.float64]:
     astronomical horizon, as expected.
     """
     latitude = np.deg2rad(float(latitude_deg))
-    return np.asarray(
-        [0.0, np.cos(latitude), np.sin(latitude)], dtype=np.float64
-    )
+    return np.asarray([0.0, np.cos(latitude), np.sin(latitude)], dtype=np.float64)
 
 
 def altaz_to_enu(
