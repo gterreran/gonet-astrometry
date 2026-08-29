@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.detection.preprocessing import PreparedDetectionImage
 from gonet_astrometry.models.detection import Detection, DetectionCatalog
 from gonet_astrometry.models.frame import ImageFrame, ImageMetadata, ObserverLocation
@@ -13,6 +14,7 @@ from gonet_astrometry.runner import (
     RunSummary,
     _prepare_report_reference,
     _resolve_report_reference_path,
+    execute_multichannel_detection_run,
     execute_tracking_run,
     preflight_tracking_locations,
     run_cli_workflow,
@@ -1033,3 +1035,136 @@ def test_grid_run_short_sequence_stops_after_temporal_tracking(
     assert summary.stellar_tracking_product_path is None
     assert summary.sidereal_product_path is None
     assert summary.track_count == len(temporal.tracks)
+
+
+def test_multichannel_detection_parallel_matches_serial(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from concurrent.futures import Future
+
+    from gonet_astrometry.models.grid import GridCalibration
+
+    paths = tuple((tmp_path / f"frame-{index}.jpg").resolve() for index in range(4))
+    frames = {path: _frame(path, index) for index, path in enumerate(paths)}
+    grid_path = (tmp_path / "camera_calibration.npz").resolve()
+    grid_path.write_bytes(b"portable-grid")
+    calibration = GridCalibration(
+        transform=object(),
+        image_shape=(20, 20),
+        coordinate_convention="test",
+        source=str(grid_path),
+    )
+
+    class FakeMultichannelDetector:
+        name = "sep-independent-channels"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def detect(self, frame_identifier: str, frame: ImageFrame) -> DetectionCatalog:
+            del frame
+            index = int(Path(frame_identifier).stem.split("-")[-1])
+            detection = Detection(
+                identifier=1,
+                x=5.0 + index,
+                y=6.0,
+                flux=10.0,
+                signal_to_noise=10.0,
+                x_uncertainty=0.5,
+                y_uncertainty=0.5,
+            )
+            return DetectionCatalog(
+                frame_identifier,
+                (detection,),
+                self.name,
+            )
+
+        def prepare_report_image(self, frame: ImageFrame) -> PreparedDetectionImage:
+            return _prepared(frame.shape)
+
+    class InlineProcessPoolExecutor:
+        def __init__(self, *, max_workers, initializer, initargs):
+            assert max_workers == 3
+            initializer(*initargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            del exc_type, exc, traceback
+            return False
+
+        def submit(self, function, *args):
+            future = Future()
+            try:
+                future.set_result(function(*args))
+            except Exception as exc:  # pragma: no cover - mirrors executor contract
+                future.set_exception(exc)
+            return future
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.IndependentChannelSEPDetector",
+        FakeMultichannelDetector,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_grid_calibration",
+        lambda path: calibration,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_image",
+        lambda path: frames[Path(path).resolve()],
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.ProcessPoolExecutor",
+        InlineProcessPoolExecutor,
+    )
+
+    serial_detector = FakeMultichannelDetector()
+    serial = execute_multichannel_detection_run(
+        reversed(paths),
+        DetectionConfig(),
+        MultiChannelSEPConfig(),
+        calibration,
+        location_tolerance_m=250.0,
+        workers=1,
+        detector=serial_detector,
+        frame_loader=lambda path: frames[Path(path).resolve()],
+    )
+    parallel_detector = FakeMultichannelDetector()
+    parallel = execute_multichannel_detection_run(
+        reversed(paths),
+        DetectionConfig(),
+        MultiChannelSEPConfig(),
+        calibration,
+        location_tolerance_m=250.0,
+        workers=3,
+        grid_calibration_path=grid_path,
+        detector=parallel_detector,
+        frame_loader=lambda path: frames[Path(path).resolve()],
+    )
+
+    assert parallel.files == serial.files
+    assert parallel.sequence == serial.sequence
+    assert parallel.reference_path == serial.reference_path
+    assert parallel.reference_catalog == serial.reference_catalog
+
+
+def test_multichannel_detection_rejects_nonpositive_workers(tmp_path: Path) -> None:
+    from gonet_astrometry.models.grid import GridCalibration
+
+    path = (tmp_path / "frame-0.jpg").resolve()
+    calibration = GridCalibration(
+        transform=object(),
+        image_shape=(20, 20),
+        coordinate_convention="test",
+    )
+
+    with pytest.raises(ValueError, match="workers must be at least one"):
+        execute_multichannel_detection_run(
+            [path],
+            DetectionConfig(),
+            MultiChannelSEPConfig(),
+            calibration,
+            location_tolerance_m=250.0,
+            workers=0,
+        )

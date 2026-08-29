@@ -69,6 +69,19 @@ Grid-calibrated angular-radius caps. For an exact reproduction of the historical
 
 Static ``--field-mask`` exclusions are combined with both regions when supplied.
 
+Parallel multichannel detection
+-------------------------------
+
+Grid-assisted source extraction can distribute independent images across worker
+processes with ``--workers N``. The default ``--workers 1`` preserves the serial
+reference path. Each worker loads the Grid calibration once and then processes
+whole images; the four native Bayer channels remain sequential within an image.
+Results are reordered deterministically before the detection sequence is written,
+so changing worker count does not change detection-product provenance.
+
+Start with a modest worker count because each worker holds its own image, local
+background maps, and Grid calibration state.
+
 Location preflight
 ------------------
 

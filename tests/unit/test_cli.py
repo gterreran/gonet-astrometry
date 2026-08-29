@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from gonet_astrometry.cli import build_parser, main
 
 
@@ -135,6 +137,8 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "--output",
             "result.pdf",
             "--overwrite-products",
+            "--workers",
+            "4",
             "--grid-calibration",
             "camera_calibration.npz",
             "--overwrite-solution",
@@ -193,6 +197,7 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.output == Path("result.pdf")
     assert arguments.output_dir == Path("products")
     assert arguments.overwrite_products is True
+    assert arguments.workers == 4
     assert arguments.grid_calibration == Path("camera_calibration.npz")
     assert arguments.overwrite_solution is True
     assert arguments.footprint_threshold_fraction == 0.25
@@ -271,6 +276,7 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["overwrite_products"] is False
     assert calls[0]["grid_calibration_path"] is None
     assert calls[0]["field_mask_path"] is None
+    assert calls[0]["detection_workers"] == 1
     assert calls[0]["multichannel_config"].field_edge_keep_margin_px == 0.0
     assert calls[0]["multichannel_config"].grid_search_radius_deg is None
     assert calls[0]["multichannel_config"].grid_acceptance_radius_deg is None
@@ -301,3 +307,17 @@ def test_run_parser_accepts_detection_only_grid_mode() -> None:
     )
 
     assert arguments.detection_only is True
+
+
+def test_run_parser_rejects_nonpositive_workers() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "run",
+                "frame.jpg",
+                "--algorithm",
+                "sep",
+                "--workers",
+                "0",
+            ]
+        )

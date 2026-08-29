@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -114,6 +115,57 @@ FrameLoader = Callable[[Path], ImageFrame]
 MetadataLoader = Callable[[Path], ImageMetadata]
 DetectorFactory = Callable[[str, DetectionConfig | None], SourceDetector]
 Clock = Callable[[], float]
+
+
+@dataclass(frozen=True, slots=True)
+class _MultichannelFileResult:
+    """One independently processed image returned by a detection worker."""
+
+    path: Path
+    epoch: DetectionEpoch
+    elapsed_s: float
+
+
+_MULTICHANNEL_WORKER_DETECTOR: IndependentChannelSEPDetector | None = None
+
+
+def _initialize_multichannel_worker(
+    grid_calibration_path: Path,
+    detection_config: DetectionConfig,
+    multichannel_config: MultiChannelSEPConfig,
+    field_mask_path: Path | None,
+) -> None:
+    """Load immutable calibration state once in each detection worker process."""
+    global _MULTICHANNEL_WORKER_DETECTOR
+
+    calibration = load_grid_calibration(Path(grid_calibration_path))
+    field_mask = (
+        load_field_mask(Path(field_mask_path)) if field_mask_path is not None else None
+    )
+    _MULTICHANNEL_WORKER_DETECTOR = IndependentChannelSEPDetector(
+        calibration,
+        detection_config,
+        multichannel_config,
+        field_mask=field_mask,
+    )
+
+
+def _detect_multichannel_file_worker(path: Path) -> _MultichannelFileResult:
+    """Load and detect one image inside an initialized worker process."""
+    detector = _MULTICHANNEL_WORKER_DETECTOR
+    if detector is None:  # pragma: no cover - defensive process initialization guard
+        raise RuntimeError("Multichannel detection worker was not initialized")
+
+    source = Path(path).expanduser().resolve()
+    frame = load_gonet_image(source)
+    started = perf_counter()
+    catalog = detector.detect(str(source), frame)
+    elapsed = perf_counter() - started
+    return _MultichannelFileResult(
+        path=source,
+        epoch=DetectionEpoch.from_frame(str(source), frame, catalog),
+        elapsed_s=elapsed,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,11 +425,21 @@ def execute_multichannel_detection_run(
     grid_calibration: GridCalibration,
     *,
     location_tolerance_m: float,
+    workers: int = 1,
+    grid_calibration_path: Path | None = None,
+    field_mask_path: Path | None = None,
     detector: IndependentChannelSEPDetector | None = None,
     frame_loader: FrameLoader = load_gonet_image,
     clock: Clock = perf_counter,
 ) -> DetectionRunArtifacts:
-    """Detect one sequence with independent native-channel SEP extraction."""
+    """Detect one sequence with independent native-channel SEP extraction.
+
+    Images are scientifically independent during source extraction. ``workers=1``
+    preserves the serial reference path; larger values distribute whole images
+    across worker processes. Channel extraction and fusion remain sequential
+    within each image so process-level parallelism cannot oversubscribe both
+    dimensions at once.
+    """
     files = tuple(
         sorted(
             {Path(path).expanduser().resolve() for path in paths},
@@ -386,41 +448,156 @@ def execute_multichannel_detection_run(
     )
     if not files:
         raise ValueError("The run command requires at least one GONet image")
+    if workers < 1:
+        raise ValueError("Detection workers must be at least one")
 
     source_detector = detector or IndependentChannelSEPDetector(
         grid_calibration,
         detection_config,
         multichannel_config,
     )
-    epochs: list[DetectionEpoch] = []
-    reference_prepared: PreparedDetectionImage | None = None
-    reference_catalog: DetectionCatalog | None = None
+    wall_started = clock()
+    epochs: list[DetectionEpoch]
+    reference_prepared: PreparedDetectionImage
+    reference_catalog: DetectionCatalog
 
-    for index, path in enumerate(files, start=1):
-        frame = frame_loader(path)
-        started = clock()
-        catalog = source_detector.detect(str(path), frame)
-        finished = clock()
+    if workers == 1 or len(files) == 1:
+        epochs = []
+        reference_prepared_value: PreparedDetectionImage | None = None
+        reference_catalog_value: DetectionCatalog | None = None
 
-        if reference_prepared is None:
-            reference_prepared = source_detector.prepare_report_image(frame)
-            reference_catalog = catalog
+        for index, path in enumerate(files, start=1):
+            frame = frame_loader(path)
+            started = clock()
+            catalog = source_detector.detect(str(path), frame)
+            finished = clock()
 
-        epoch = DetectionEpoch.from_frame(str(path), frame, catalog)
-        epochs.append(epoch)
-        logger.info(
-            "Multichannel detection %d/%d | %s | %d candidates | %.3f s | "
-            "midpoint %s",
-            index,
-            len(files),
-            path.name,
-            len(catalog),
-            finished - started,
-            epoch.exposure_midpoint.isoformat(),
+            if reference_prepared_value is None:
+                reference_prepared_value = source_detector.prepare_report_image(frame)
+                reference_catalog_value = catalog
+
+            epoch = DetectionEpoch.from_frame(str(path), frame, catalog)
+            epochs.append(epoch)
+            logger.info(
+                "Multichannel detection %d/%d | %s | %d candidates | %.3f s | "
+                "midpoint %s",
+                index,
+                len(files),
+                path.name,
+                len(catalog),
+                finished - started,
+                epoch.exposure_midpoint.isoformat(),
+            )
+
+        if (
+            reference_prepared_value is None or reference_catalog_value is None
+        ):  # pragma: no cover
+            raise RuntimeError("Detection run did not produce a reference catalog")
+        reference_prepared = reference_prepared_value
+        reference_catalog = reference_catalog_value
+        effective_workers = 1
+    else:
+        if not isinstance(source_detector, IndependentChannelSEPDetector):
+            raise ValueError(
+                "Parallel multichannel detection requires "
+                "IndependentChannelSEPDetector"
+            )
+
+        worker_grid_path = (
+            Path(grid_calibration_path).expanduser().resolve()
+            if grid_calibration_path is not None
+            else (
+                Path(grid_calibration.source).expanduser().resolve()
+                if grid_calibration.source is not None
+                else None
+            )
         )
+        if worker_grid_path is None:
+            raise ValueError(
+                "Parallel multichannel detection requires a portable Grid "
+                "calibration path"
+            )
+        worker_field_mask_path = (
+            Path(field_mask_path).expanduser().resolve()
+            if field_mask_path is not None
+            else None
+        )
+        if (
+            getattr(source_detector, "field_mask", None) is not None
+            and worker_field_mask_path is None
+        ):
+            raise ValueError(
+                "Parallel multichannel detection requires field_mask_path when "
+                "the detector uses a static field mask"
+            )
+        effective_workers = min(workers, len(files))
+        results_by_path: dict[Path, _MultichannelFileResult] = {}
 
-    if reference_prepared is None or reference_catalog is None:  # pragma: no cover
-        raise RuntimeError("Detection run did not produce a reference catalog")
+        logger.info(
+            "Starting parallel multichannel detection | %d images | %d workers",
+            len(files),
+            effective_workers,
+        )
+        with ProcessPoolExecutor(
+            max_workers=effective_workers,
+            initializer=_initialize_multichannel_worker,
+            initargs=(
+                worker_grid_path,
+                detection_config,
+                multichannel_config,
+                worker_field_mask_path,
+            ),
+        ) as executor:
+            futures: dict[Future[_MultichannelFileResult], Path] = {
+                executor.submit(_detect_multichannel_file_worker, path): path
+                for path in files
+            }
+            for completed, future in enumerate(as_completed(futures), start=1):
+                path = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    for pending in futures:
+                        pending.cancel()
+                    raise RuntimeError(
+                        f"Multichannel detection failed for {path}: {exc}"
+                    ) from exc
+                results_by_path[result.path] = result
+                logger.info(
+                    "Multichannel detection %d/%d | %s | %d candidates | %.3f s | "
+                    "midpoint %s",
+                    completed,
+                    len(files),
+                    result.path.name,
+                    len(result.epoch.catalog),
+                    result.elapsed_s,
+                    result.epoch.exposure_midpoint.isoformat(),
+                )
+
+        missing = [path for path in files if path not in results_by_path]
+        if missing:  # pragma: no cover - executor contract guard
+            raise RuntimeError(
+                "Parallel multichannel detection returned no result for: "
+                + ", ".join(str(path) for path in missing)
+            )
+
+        # Reconstruct the sequence in deterministic input order regardless of
+        # worker completion order. DetectionSequence performs the final
+        # chronological ordering below.
+        epochs = [results_by_path[path].epoch for path in files]
+        reference_frame = frame_loader(files[0])
+        reference_prepared = source_detector.prepare_report_image(reference_frame)
+        reference_catalog = results_by_path[files[0]].epoch.catalog
+
+    wall_elapsed = clock() - wall_started
+    logger.info(
+        "Multichannel detection summary | %d images | %d workers | %.3f s wall | "
+        "%.3f images/s",
+        len(files),
+        effective_workers,
+        wall_elapsed,
+        len(files) / wall_elapsed if wall_elapsed > 0.0 else float("inf"),
+    )
 
     sequence = DetectionSequence.from_epochs(epochs)
     sequence.validate_locations(location_tolerance_m)
@@ -633,6 +810,7 @@ def _run_grid_cli_workflow(
     overwrite_products: bool,
     grid_calibration_path: Path,
     field_mask_path: Path | None,
+    detection_workers: int,
     multichannel_config: MultiChannelSEPConfig | None,
     spherical_tracking_config: SphericalTrackingConfig | None,
     stellar_merge_config: StellarTrackMergeConfig | None,
@@ -736,6 +914,9 @@ def _run_grid_cli_workflow(
             multi_config,
             grid_calibration,
             location_tolerance_m=tracking_config.location_tolerance_m,
+            workers=detection_workers,
+            grid_calibration_path=grid_path,
+            field_mask_path=resolved_field_mask_path,
             detector=report_detector,
         )
         detection_product = DetectionProduct(
@@ -1201,6 +1382,7 @@ def run_cli_workflow(
     overwrite_products: bool = False,
     grid_calibration_path: Path | None = None,
     field_mask_path: Path | None = None,
+    detection_workers: int = 1,
     multichannel_config: MultiChannelSEPConfig | None = None,
     spherical_tracking_config: SphericalTrackingConfig | None = None,
     stellar_merge_config: StellarTrackMergeConfig | None = None,
@@ -1234,6 +1416,8 @@ def run_cli_workflow(
         )
     if not discovery.files:
         raise ValueError("The run command requires at least one candidate GONet image")
+    if detection_workers < 1:
+        raise ValueError("Detection workers must be at least one")
     if detection_only and grid_calibration_path is None:
         raise ValueError("--detection-only requires --grid-calibration")
     if grid_calibration_path is None and len(discovery.files) < 2:
@@ -1248,6 +1432,10 @@ def run_cli_workflow(
 
     if field_mask_path is not None and grid_calibration_path is None:
         raise ValueError("--field-mask requires --grid-calibration")
+    if detection_workers != 1 and grid_calibration_path is None:
+        raise ValueError(
+            "--workers greater than 1 currently requires --grid-calibration"
+        )
 
     if grid_calibration_path is not None:
         return _run_grid_cli_workflow(
@@ -1263,6 +1451,7 @@ def run_cli_workflow(
             overwrite_products=overwrite_products,
             grid_calibration_path=grid_calibration_path,
             field_mask_path=field_mask_path,
+            detection_workers=detection_workers,
             multichannel_config=multichannel_config,
             spherical_tracking_config=spherical_tracking_config,
             stellar_merge_config=stellar_merge_config,

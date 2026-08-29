@@ -124,6 +124,13 @@ gonet-astrometry run /path/to/night \
     --grid-calibration /path/to/camera_calibration.npz
 ```
 
+Independent images in the Grid-assisted multichannel detection stage can be
+processed in separate worker processes. Use ``--workers N`` to enable this;
+``--workers 1`` remains the deterministic serial reference path. Worker count is
+an execution setting only and does not change product provenance. For example,
+``--workers 4`` processes up to four images concurrently while each image still
+runs its four native Bayer channels sequentially.
+
 In the Grid-assisted multichannel SEP path, the usable fisheye edge is inferred
 from each image by default. ``--field-edge-threshold-fraction`` controls the
 image-contrast threshold for that footprint, while

@@ -130,6 +130,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=1,
+        help=(
+            "Worker processes for Grid-assisted per-image multichannel "
+            "detection (default: %(default)s). Use 1 for the serial reference "
+            "path."
+        ),
+    )
+    run.add_argument(
         "--grid-calibration",
         type=Path,
         default=None,
@@ -704,6 +714,14 @@ def _orientation_config(arguments: argparse.Namespace) -> OrientationFitConfig:
     )
 
 
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer."""
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def _optional_nonnegative_int(value: str) -> int | None:
     """Parse a non-negative integer or the literal ``none``."""
     if value.casefold() == "none":
@@ -827,6 +845,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             overwrite_products=arguments.overwrite_products,
             grid_calibration_path=arguments.grid_calibration,
             field_mask_path=arguments.field_mask,
+            detection_workers=arguments.workers,
             multichannel_config=_multichannel_config(arguments),
             spherical_tracking_config=_spherical_tracking_config(arguments),
             stellar_merge_config=_stellar_merge_config(arguments),
