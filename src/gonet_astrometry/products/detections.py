@@ -13,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.field_mask import FieldMask
 from gonet_astrometry.models.detection import (
     Detection,
     DetectionCatalog,
@@ -23,7 +24,7 @@ from gonet_astrometry.products.errors import ProductFormatError, ProductMismatch
 from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
 
 _FORMAT = "gonet-astrometry-detections"
-_VERSION = 1
+_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,14 @@ class DetectionProduct:
         Files skipped because they did not belong to the dominant site group.
     metadata_errors
         Files skipped because required metadata could not be interpreted.
+    field_mask
+        Optional static full-sensor exclusion mask embedded directly in the
+        detection product. This lets downstream diagnostics recover the same
+        fixed detector geometry without depending on the original mask path.
+    field_mask_keep_margin_px
+        Additional full-sensor inward acceptance margin applied to the static
+        field mask. Downstream completeness diagnostics can reconstruct the same
+        static acceptance region from the embedded mask and this value.
     """
 
     product_id: str
@@ -65,6 +74,24 @@ class DetectionProduct:
     zero_gps_files: tuple[Path, ...] = ()
     location_outlier_files: tuple[Path, ...] = ()
     metadata_errors: tuple[tuple[Path, str], ...] = ()
+    field_mask: FieldMask | None = None
+    field_mask_keep_margin_px: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.field_mask_keep_margin_px < 0.0:
+            raise ValueError("field_mask_keep_margin_px cannot be negative")
+        if self.field_mask is None:
+            if self.field_mask_keep_margin_px != 0.0:
+                raise ValueError(
+                    "field_mask_keep_margin_px requires an embedded field mask"
+                )
+            return
+        image_shapes = {epoch.image_shape for epoch in self.sequence.epochs}
+        if image_shapes != {self.field_mask.image_shape}:
+            raise ValueError(
+                "Embedded field mask shape does not match the detection sequence: "
+                f"mask={self.field_mask.image_shape}, sequence={sorted(image_shapes)}"
+            )
 
     @property
     def skipped_file_count(self) -> int:
@@ -99,6 +126,23 @@ def save_detection_product(path: Path, product: DetectionProduct) -> Path:
                 sort_keys=True,
                 separators=(",", ":"),
             )
+        ),
+        "has_field_mask": np.asarray(product.field_mask is not None, dtype=np.bool_),
+        "field_mask_excluded": (
+            np.asarray(product.field_mask.excluded, dtype=np.bool_)
+            if product.field_mask is not None
+            else np.zeros((0, 0), dtype=np.bool_)
+        ),
+        "field_mask_coordinate_convention": _scalar_string(
+            product.field_mask.coordinate_convention
+            if product.field_mask is not None
+            else ""
+        ),
+        "field_mask_description": _scalar_string(
+            product.field_mask.description if product.field_mask is not None else ""
+        ),
+        "field_mask_keep_margin_px": np.asarray(
+            product.field_mask_keep_margin_px, dtype=np.float64
         ),
         "location_tolerance_m": np.asarray(
             product.location_tolerance_m, dtype=np.float64
@@ -257,6 +301,7 @@ def load_detection_product(
             if not isinstance(config_payload, dict):
                 raise ProductFormatError("Detection configuration is not a JSON object")
             config_mapping = cast(dict[str, Any], config_payload)
+            field_mask = _read_embedded_field_mask(data)
             product = DetectionProduct(
                 product_id=_read_scalar_string(data, "product_id"),
                 algorithm=_read_scalar_string(data, "algorithm"),
@@ -279,6 +324,10 @@ def load_detection_product(
                     (Path(item), message)
                     for item, message in zip(error_paths, error_messages, strict=True)
                 ),
+                field_mask=field_mask,
+                field_mask_keep_margin_px=float(
+                    np.asarray(data["field_mask_keep_margin_px"]).item()
+                ),
             )
     except ProductMismatchError:
         raise
@@ -289,6 +338,34 @@ def load_detection_product(
             f"Could not read detection product {path}: {exc}"
         ) from exc
     return product
+
+
+def _read_embedded_field_mask(data: np.lib.npyio.NpzFile) -> FieldMask | None:
+    """Return the static field mask embedded in a version-2 product."""
+    has_mask = bool(np.asarray(data["has_field_mask"]).item())
+    excluded = np.asarray(data["field_mask_excluded"], dtype=np.bool_)
+    coordinate_convention = _read_scalar_string(
+        data, "field_mask_coordinate_convention"
+    )
+    description = _read_scalar_string(data, "field_mask_description")
+
+    if not has_mask:
+        if excluded.shape != (0, 0):
+            raise ProductFormatError(
+                "Detection product declares no field mask but stores mask pixels"
+            )
+        return None
+    if excluded.ndim != 2 or excluded.size == 0:
+        raise ProductFormatError("Embedded detection field mask is empty or invalid")
+    if not coordinate_convention:
+        raise ProductFormatError(
+            "Embedded detection field mask has no coordinate convention"
+        )
+    return FieldMask(
+        excluded=excluded,
+        coordinate_convention=coordinate_convention,
+        description=description,
+    )
 
 
 def _validate_header(

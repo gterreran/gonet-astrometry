@@ -146,6 +146,8 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "0.25",
             "--field-edge-keep-margin-px",
             "48",
+            "--field-mask-keep-margin-px",
+            "24",
             "--no-use-provisional-field-mask",
             "--grid-search-radius-deg",
             "75",
@@ -203,6 +205,7 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.footprint_threshold_fraction == 0.25
     assert arguments.use_provisional_field_mask is False
     assert arguments.field_edge_keep_margin_px == 48.0
+    assert arguments.field_mask_keep_margin_px == 24.0
     assert arguments.grid_search_radius_deg == 75.0
     assert arguments.grid_acceptance_radius_deg == 70.0
     assert arguments.multichannel_min_support == 2
@@ -278,6 +281,7 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["field_mask_path"] is None
     assert calls[0]["detection_workers"] == 1
     assert calls[0]["multichannel_config"].field_edge_keep_margin_px == 0.0
+    assert calls[0]["multichannel_config"].field_mask_keep_margin_px == 0.0
     assert calls[0]["multichannel_config"].grid_search_radius_deg is None
     assert calls[0]["multichannel_config"].grid_acceptance_radius_deg is None
     assert calls[0]["multichannel_config"].minimum_channel_support == 1

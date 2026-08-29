@@ -777,6 +777,7 @@ def _parameter_summary(
             f"threshold={detection.threshold_sigma:g}sigma  "
             f"edge={edge_setting}  "
             f"edge_keep={multichannel.field_edge_keep_margin_px:g}px  "
+            f"mask_keep={multichannel.field_mask_keep_margin_px:g}px  "
             f"grid_search={grid_search}  grid_accept={grid_accept}  "
             f"channel_match={multichannel.channel_match_radius_px:g}px  "
             f"initial_speed={spherical.max_initial_speed_deg_per_minute:g}deg/min  "

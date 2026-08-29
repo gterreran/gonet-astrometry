@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from gonet_astrometry.detection.config import DetectionConfig
+from gonet_astrometry.detection.field_mask import FieldMask
 from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.models.detection import (
     Detection,
@@ -109,7 +110,7 @@ def test_detection_product_round_trip_is_pickle_free(tmp_path: Path) -> None:
 
     with np.load(path, allow_pickle=False) as data:
         assert data["format"].item() == "gonet-astrometry-detections"
-        assert data["version"].item() == 1
+        assert data["version"].item() == 3
 
     loaded = load_detection_product(path, expected_product_id=product_id)
 
@@ -121,7 +122,54 @@ def test_detection_product_round_trip_is_pickle_free(tmp_path: Path) -> None:
     assert loaded.discovered_files == product.discovered_files
     assert loaded.skipped_file_count == 3
     assert loaded.metadata_errors == product.metadata_errors
+    assert loaded.field_mask is None
     assert loaded.sequence.epochs == product.sequence.epochs
+
+
+def test_detection_product_embeds_static_field_mask(tmp_path: Path) -> None:
+    sequence = _sequence(tmp_path)
+    config = DetectionConfig()
+    field_mask = FieldMask(
+        excluded=np.zeros(sequence.epochs[0].image_shape, dtype=np.bool_),
+        coordinate_convention="full-sensor test convention",
+        description="synthetic static exclusion",
+    )
+    field_mask.excluded[10:20, 30:40] = True
+    product = DetectionProduct(
+        product_id="masked-detections",
+        algorithm="sep-independent-channels",
+        detection_config=config,
+        location_tolerance_m=250.0,
+        sequence=sequence,
+        reference_path=sequence.epochs[0].source_path,
+        discovered_files=tuple(epoch.source_path for epoch in sequence.epochs),
+        field_mask=field_mask,
+        field_mask_keep_margin_px=12.0,
+    )
+
+    path = save_detection_product(tmp_path / "masked-detections.npz", product)
+    loaded = load_detection_product(path)
+
+    assert loaded.field_mask is not None
+    assert loaded.field_mask.coordinate_convention == field_mask.coordinate_convention
+    assert loaded.field_mask.description == field_mask.description
+    assert loaded.field_mask_keep_margin_px == 12.0
+    np.testing.assert_array_equal(loaded.field_mask.excluded, field_mask.excluded)
+
+
+def test_detection_product_rejects_static_margin_without_mask(tmp_path: Path) -> None:
+    sequence = _sequence(tmp_path)
+    with pytest.raises(ValueError, match="field_mask_keep_margin_px requires"):
+        DetectionProduct(
+            product_id="invalid-static-margin",
+            algorithm="sep",
+            detection_config=DetectionConfig(),
+            location_tolerance_m=250.0,
+            sequence=sequence,
+            reference_path=sequence.epochs[0].source_path,
+            discovered_files=tuple(epoch.source_path for epoch in sequence.epochs),
+            field_mask_keep_margin_px=5.0,
+        )
 
 
 def test_detection_product_rejects_different_provenance(tmp_path: Path) -> None:

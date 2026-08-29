@@ -132,6 +132,7 @@ def test_weighted_coordinate_uses_inverse_variance() -> None:
     ("kwargs", "message"),
     [
         ({"field_edge_keep_margin_px": -1.0}, "field_edge_keep_margin_px"),
+        ({"field_mask_keep_margin_px": -1.0}, "field_mask_keep_margin_px"),
         ({"grid_search_radius_deg": 0.0}, "grid_search_radius_deg"),
         ({"grid_acceptance_radius_deg": 0.0}, "grid_acceptance_radius_deg"),
         (
@@ -265,6 +266,41 @@ def test_static_field_mask_is_combined_with_automatic_field_edge() -> None:
     assert not acceptance[60, 60]
     assert search[60, 80]
     assert acceptance[60, 80]
+
+
+def test_static_field_mask_keep_margin_erodes_acceptance_only() -> None:
+    from gonet_astrometry.detection.field_mask import FieldMask
+    from gonet_astrometry.detection.multichannel import IndependentChannelSEPDetector
+
+    data = np.ones((120, 120), dtype=float)
+    excluded = np.zeros((120, 120), dtype=bool)
+    excluded[:10, :] = True
+    excluded[-10:, :] = True
+    excluded[:, :10] = True
+    excluded[:, -10:] = True
+    field_mask = FieldMask(
+        excluded=excluded,
+        coordinate_convention=_IdentityEvaluator.image_coordinate_convention,
+    )
+    detector = IndependentChannelSEPDetector(
+        _synthetic_calibration(),
+        DetectionConfig(
+            threshold_sigma=3.0,
+            use_provisional_field_mask=False,
+        ),
+        MultiChannelSEPConfig(field_mask_keep_margin_px=8.0),
+        field_mask=field_mask,
+    )
+
+    search, acceptance = detector._frame_field_masks(_synthetic_frame(data))
+
+    assert search[60, 10]  # Search may use the complete static mask.
+    assert not acceptance[60, 10]
+    assert search[60, 17]
+    assert not acceptance[60, 17]
+    assert acceptance[60, 19]
+    assert acceptance[60, 60]
+    assert np.count_nonzero(acceptance) < np.count_nonzero(search)
 
 
 class _RadialEvaluator:

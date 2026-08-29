@@ -64,6 +64,11 @@ class MultiChannelSEPConfig:
         ``footprint_threshold_fraction`` and ``footprint_erosion_px``. A value
         of zero accepts detections anywhere inside that conservative footprint.
         This margin is ignored when automatic footprint detection is disabled.
+    field_mask_keep_margin_px
+        Additional full-sensor distance required inside the optional static
+        field mask before a detection is retained. Search/background estimation
+        may still use the complete static mask; only final centroid acceptance is
+        eroded. A value of zero accepts detections up to the static mask boundary.
     grid_search_radius_deg
         Optional Grid-calibrated angular-radius cap applied to the search field.
         ``None`` leaves the search geometry entirely image-driven.
@@ -84,6 +89,7 @@ class MultiChannelSEPConfig:
     """
 
     field_edge_keep_margin_px: float = 0.0
+    field_mask_keep_margin_px: float = 0.0
     grid_search_radius_deg: float | None = None
     grid_acceptance_radius_deg: float | None = None
     grid_contour_samples: int = 2160
@@ -94,6 +100,8 @@ class MultiChannelSEPConfig:
     def __post_init__(self) -> None:
         if self.field_edge_keep_margin_px < 0.0:
             raise ValueError("field_edge_keep_margin_px cannot be negative")
+        if self.field_mask_keep_margin_px < 0.0:
+            raise ValueError("field_mask_keep_margin_px cannot be negative")
         if (
             self.grid_search_radius_deg is not None
             and self.grid_search_radius_deg <= 0.0
@@ -178,9 +186,7 @@ class IndependentChannelSEPDetector:
         prepared_detector: _PreparedDetector | None = None,
     ) -> None:
         self.calibration = calibration
-        self.detection_config = detection_config or DetectionConfig(
-            threshold_sigma=3.0,
-        )
+        self.detection_config = detection_config or DetectionConfig()
         self.multichannel_config = multichannel_config or MultiChannelSEPConfig()
         self.compact_detection_config = compact_detection_config(self.detection_config)
         self._detector = (
@@ -351,7 +357,12 @@ class IndependentChannelSEPDetector:
         if self.field_mask is not None:
             allowed = ~self.field_mask.excluded
             search &= allowed
-            acceptance &= allowed
+
+            mask_keep_margin = self.multichannel_config.field_mask_keep_margin_px
+            if mask_keep_margin > 0.0:
+                acceptance &= distance_transform_edt(allowed) > mask_keep_margin
+            else:
+                acceptance &= allowed
 
         # A source cannot be accepted from pixels that were excluded from the
         # search/background stage, even when only one Grid-radius cap is set.

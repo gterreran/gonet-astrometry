@@ -66,7 +66,7 @@ def test_daostarfinder_backend_converts_table_rows(
     assert result.diagnostics.sharpness == 0.7
     assert result.diagnostics.roundness1 == 0.2
     assert result.diagnostics.roundness2 == -0.1
-    assert captured["threshold"] == 5.0
+    assert captured["threshold"] == 3.5
 
 
 def test_daostarfinder_backend_handles_no_sources(

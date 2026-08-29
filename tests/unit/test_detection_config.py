@@ -40,6 +40,10 @@ def test_detection_config_rejects_invalid_values(
         DetectionConfig(**kwargs)
 
 
+def test_detection_config_default_threshold_is_3p5_sigma() -> None:
+    assert DetectionConfig().threshold_sigma == 3.5
+
+
 def test_detector_registry_exposes_and_constructs_backends() -> None:
     options = detector_options()
 

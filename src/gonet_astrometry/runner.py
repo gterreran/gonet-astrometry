@@ -932,6 +932,8 @@ def _run_grid_cli_workflow(
                 item.path for item in preflight.selection.outliers
             ),
             metadata_errors=preflight.metadata_errors,
+            field_mask=field_mask,
+            field_mask_keep_margin_px=multi_config.field_mask_keep_margin_px,
         )
         written_detection = save_detection_product(
             store.detections_path,

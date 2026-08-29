@@ -61,7 +61,7 @@ class DetectionConfig:
         If a numeric setting lies outside its valid range.
     """
 
-    threshold_sigma: float = 5.0
+    threshold_sigma: float = 3.5
     fwhm_px: float = 3.0
     min_separation_px: float = 5.0
     min_pixels: int = 5

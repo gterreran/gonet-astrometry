@@ -34,7 +34,9 @@ Detection settings
 ------------------
 
 Every field of :class:`~gonet_astrometry.detection.config.DetectionConfig` is
-available as a command-line option. For example::
+available as a command-line option. The default detection threshold is ``3.5``
+sigma, selected from catalog-backed completeness tests on representative Adler
+night-sky data. For example::
 
    gonet-astrometry run frame1.jpg frame2.jpg frame3.jpg \
        --algorithm sep \
@@ -68,6 +70,10 @@ Grid-calibrated angular-radius caps. For an exact reproduction of the historical
    --grid-acceptance-radius-deg 70
 
 Static ``--field-mask`` exclusions are combined with both regions when supplied.
+``--field-mask-keep-margin-px`` can additionally require retained centroids to
+lie a full-sensor distance inside the static-mask boundary. This is an acceptance
+erosion only: background estimation and source search may still use the complete
+static allowed region.
 
 Parallel multichannel detection
 -------------------------------

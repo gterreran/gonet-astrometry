@@ -131,8 +131,9 @@ an execution setting only and does not change product provenance. For example,
 ``--workers 4`` processes up to four images concurrently while each image still
 runs its four native Bayer channels sequentially.
 
-In the Grid-assisted multichannel SEP path, the usable fisheye edge is inferred
-from each image by default. ``--field-edge-threshold-fraction`` controls the
+In the Grid-assisted multichannel SEP path, the default source threshold is
+``3.5`` sigma. The usable fisheye edge is inferred from each image by default.
+``--field-edge-threshold-fraction`` controls the
 image-contrast threshold for that footprint, while
 ``--field-edge-keep-margin-px`` can require accepted detections to lie farther
 inside the inferred edge. The latter defaults to zero; the existing conservative
@@ -143,7 +144,10 @@ coordinates. To reproduce the historical 75/70-degree behavior exactly, disable
 the automatic footprint with ``--no-use-provisional-field-mask`` and pass
 ``--grid-search-radius-deg 75 --grid-acceptance-radius-deg 70``. An optional
 portable ``--field-mask`` can additionally exclude fixed structures such as the
-Adler dome.
+Adler dome. ``--field-mask-keep-margin-px`` optionally rejects retained centroids
+within an additional full-sensor distance of that static-mask boundary while
+still allowing the complete static mask to contribute to search/background
+estimation.
 
 The PDF background normally uses the detection product's original reference
 image. Choose any other retained epoch without recomputing scientific products

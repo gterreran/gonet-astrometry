@@ -41,3 +41,9 @@ artifacts/
 
 # Runtime outputs
 /gonet_astrometry_output/
+
+# Local research / diagnostic outputs
+/*.pdf
+/*.npz
+/*.patch
+/diff.log

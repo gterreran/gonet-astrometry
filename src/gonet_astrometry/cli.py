@@ -383,6 +383,16 @@ def _add_multichannel_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--field-mask-keep-margin-px",
+        type=float,
+        default=_MULTICHANNEL_DEFAULTS.field_mask_keep_margin_px,
+        help=(
+            "Additional full-sensor distance required inside the optional static "
+            "field-mask boundary before retaining a source (default: "
+            "%(default)s px)."
+        ),
+    )
+    parser.add_argument(
         "--grid-search-radius-deg",
         type=float,
         default=_MULTICHANNEL_DEFAULTS.grid_search_radius_deg,
@@ -424,6 +434,7 @@ def _multichannel_config(arguments: argparse.Namespace) -> MultiChannelSEPConfig
     """Construct independent-channel detection settings."""
     return MultiChannelSEPConfig(
         field_edge_keep_margin_px=arguments.field_edge_keep_margin_px,
+        field_mask_keep_margin_px=arguments.field_mask_keep_margin_px,
         grid_search_radius_deg=arguments.grid_search_radius_deg,
         grid_acceptance_radius_deg=arguments.grid_acceptance_radius_deg,
         channel_match_radius_px=arguments.multichannel_match_radius_px,
