@@ -80,9 +80,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=[spec.identifier for spec in DETECTOR_SPECS],
         help=(
-            "Source-detection backend. With --grid-calibration the stellar "
-            "pipeline currently requires 'sep' and runs it independently on "
-            "the four native Bayer channels."
+            "Source-detection backend. With --grid-calibration or "
+            "--stellar-calibration the calibrated stellar pipeline requires "
+            "'sep' and runs it independently on the four native Bayer channels."
         ),
     )
     run.add_argument(
@@ -138,9 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=1,
         help=(
-            "Worker processes for Grid-assisted per-image multichannel "
-            "detection (default: %(default)s). Use 1 for the serial reference "
-            "path."
+            "Worker processes for calibrated per-image multichannel detection "
+            "(default: %(default)s). Use 1 for the serial reference path."
         ),
     )
     run.add_argument(
@@ -154,15 +153,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument(
+        "--stellar-calibration",
+        type=Path,
+        default=None,
+        help=(
+            "Portable stellar_camera_calibration.npz artifact from a previous "
+            "calibration sequence. This bypasses Grid geometry: catalog stars are "
+            "projected directly to raw sensor pixels through the fitted stellar "
+            "camera model. Use --tracking-mode catalog or hybrid for normal runs."
+        ),
+    )
+    run.add_argument(
         "--tracking-mode",
         choices=("legacy", "catalog", "hybrid"),
         default="legacy",
         help=(
-            "Grid-assisted association strategy. 'legacy' preserves spherical "
-            "temporal tracking and sidereal fragment merging; 'catalog' groups "
-            "detections directly by catalog star identity; 'hybrid' uses catalog "
-            "tracks first and runs the spherical tracker only on unmatched "
-            "detections (default: %(default)s)."
+            "Association strategy. With Grid geometry, 'legacy' preserves the "
+            "historical spherical/sidereal path. 'catalog' groups detections "
+            "directly by catalog identity; 'hybrid' adds spherical fallback on "
+            "unmatched detections. --stellar-calibration supports catalog/hybrid "
+            "tracking directly (default: %(default)s)."
         ),
     )
     run.add_argument(
@@ -1085,6 +1095,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=arguments.output_dir,
             overwrite_products=arguments.overwrite_products,
             grid_calibration_path=arguments.grid_calibration,
+            stellar_camera_calibration_path=arguments.stellar_calibration,
             field_mask_path=arguments.field_mask,
             detection_workers=arguments.workers,
             multichannel_config=_multichannel_config(arguments),
@@ -1106,7 +1117,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         detection_state = "cached" if summary.reused_detection_product else "computed"
         tracking_state = "cached" if summary.reused_tracking_product else "computed"
-        if arguments.grid_calibration is not None:
+        if (
+            arguments.grid_calibration is not None
+            or arguments.stellar_calibration is not None
+        ):
             product_parts = [f"detections {detection_state}"]
             if summary.temporal_tracking_product_path is not None:
                 temporal_state = (

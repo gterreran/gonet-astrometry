@@ -31,3 +31,15 @@ Image-plane bootstrap tracking
 
 .. automodule:: gonet_astrometry.tracking.image_plane
    :members:
+
+Catalog stellar identification
+------------------------------
+
+.. automodule:: gonet_astrometry.tracking.catalog_identification
+   :members:
+
+Stellar-camera catalog identification
+-------------------------------------
+
+.. automodule:: gonet_astrometry.tracking.stellar_camera_identification
+   :members:

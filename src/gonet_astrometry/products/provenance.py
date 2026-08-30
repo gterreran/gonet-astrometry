@@ -18,6 +18,9 @@ from gonet_astrometry.solving.stellar_tracks import StellarTrackMergeConfig
 from gonet_astrometry.tracking.catalog_identification import StellarIdentificationConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
+from gonet_astrometry.tracking.stellar_camera_identification import (
+    StellarCameraIdentificationConfig,
+)
 
 DETECTION_PIPELINE_REVISION = 1
 """Manual cache revision for changes to detection semantics."""
@@ -48,6 +51,12 @@ HYBRID_FALLBACK_TRACKING_PIPELINE_REVISION = 1
 
 STELLAR_CAMERA_CALIBRATION_PIPELINE_REVISION = 1
 """Manual cache revision for direct stellar camera-calibration semantics."""
+
+STELLAR_CAMERA_IDENTIFICATION_PIPELINE_REVISION = 1
+"""Manual cache revision for fixed stellar-camera catalog matching semantics."""
+
+STELLAR_MULTICHANNEL_DETECTION_PIPELINE_REVISION = 1
+"""Manual cache revision for stellar-camera-backed multichannel detection."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +174,57 @@ def multichannel_detection_product_id(
         "grid_calibration": grid.as_mapping(),
         "field_mask": field_mask,
         "location_tolerance_m": location_tolerance_m,
+    }
+    return _digest(payload)
+
+
+def stellar_multichannel_detection_product_id(
+    paths: Iterable[Path],
+    config: DetectionConfig,
+    multichannel_config: MultiChannelSEPConfig,
+    stellar_camera_calibration_path: Path,
+    location_tolerance_m: float,
+    field_mask_path: Path | None = None,
+) -> str:
+    """Return identity of multichannel detections using stellar geometry."""
+    calibration = fingerprint_inputs((stellar_camera_calibration_path,))[0]
+    field_mask = (
+        fingerprint_inputs((field_mask_path,))[0].as_mapping()
+        if field_mask_path is not None
+        else None
+    )
+    payload = {
+        "kind": "stellar-multichannel-detections",
+        "schema_version": 1,
+        "pipeline_revision": STELLAR_MULTICHANNEL_DETECTION_PIPELINE_REVISION,
+        "inputs": [item.as_mapping() for item in fingerprint_inputs(paths)],
+        "algorithm": "sep-independent-channels",
+        "detection_config": asdict(config),
+        "multichannel_config": asdict(multichannel_config),
+        "stellar_camera_calibration": calibration.as_mapping(),
+        "field_mask": field_mask,
+        "location_tolerance_m": location_tolerance_m,
+    }
+    return _digest(payload)
+
+
+def stellar_camera_identification_product_id(
+    detection_id: str,
+    stellar_camera_calibration_path: Path,
+    catalog_path: Path,
+    config: StellarCameraIdentificationConfig,
+) -> str:
+    """Return identity of direct stellar-camera catalog associations."""
+    calibration = fingerprint_inputs((stellar_camera_calibration_path,))[0]
+    catalog = fingerprint_inputs((catalog_path,))[0]
+    payload = {
+        "kind": "stellar-camera-identifications",
+        "schema_version": 1,
+        "pipeline_revision": STELLAR_CAMERA_IDENTIFICATION_PIPELINE_REVISION,
+        "detection_product_id": detection_id,
+        "stellar_camera_calibration": calibration.as_mapping(),
+        "catalog": catalog.as_mapping(),
+        "identification_config": asdict(config),
     }
     return _digest(payload)
 

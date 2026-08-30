@@ -40,6 +40,12 @@ Direct stellar camera-calibration products
 .. automodule:: gonet_astrometry.products.stellar_camera_calibration
    :members:
 
+Direct stellar-camera identification products
+----------------------------------------------
+
+.. automodule:: gonet_astrometry.products.stellar_camera_identifications
+   :members:
+
 Product errors
 --------------
 

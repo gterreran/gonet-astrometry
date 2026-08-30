@@ -28,6 +28,7 @@ from gonet_astrometry.adapters.grid_calibration import load_grid_calibration
 from gonet_astrometry.calibration.stellar_camera import (
     StellarCameraCalibrationConfig,
     StellarCameraCalibrator,
+    stellar_camera_ray_calibration,
 )
 from gonet_astrometry.catalogs import (
     BrightStarCatalog,
@@ -58,6 +59,7 @@ from gonet_astrometry.products import (
     ProductStore,
     SiderealProduct,
     StellarCameraCalibrationProduct,
+    StellarCameraIdentificationProduct,
     StellarIdentificationProduct,
     StellarTrackingProduct,
     TemporalTrackingProduct,
@@ -68,6 +70,7 @@ from gonet_astrometry.products import (
     load_orientation_product,
     load_sidereal_product,
     load_stellar_camera_calibration_product,
+    load_stellar_camera_identification_product,
     load_stellar_identification_product,
     load_stellar_tracking_product,
     load_temporal_tracking_product,
@@ -78,6 +81,7 @@ from gonet_astrometry.products import (
     save_orientation_product,
     save_sidereal_product,
     save_stellar_camera_calibration_product,
+    save_stellar_camera_identification_product,
     save_stellar_identification_product,
     save_stellar_tracking_product,
     save_temporal_tracking_product,
@@ -85,7 +89,9 @@ from gonet_astrometry.products import (
     sidereal_product_id,
     spherical_tracking_product_id,
     stellar_camera_calibration_product_id,
+    stellar_camera_identification_product_id,
     stellar_identification_product_id,
+    stellar_multichannel_detection_product_id,
     stellar_tracking_product_id,
     tracking_product_id,
 )
@@ -133,6 +139,10 @@ from gonet_astrometry.tracking.spherical import (
     SphericalTracker,
     SphericalTrackingConfig,
 )
+from gonet_astrometry.tracking.stellar_camera_identification import (
+    StellarCameraIdentificationConfig,
+    StellarCameraSequenceMatcher,
+)
 from gonet_astrometry.tracking.temporal import (
     sequence_timing_diagnostics,
     track_population_diagnostics,
@@ -159,15 +169,25 @@ _MULTICHANNEL_WORKER_DETECTOR: IndependentChannelSEPDetector | None = None
 
 
 def _initialize_multichannel_worker(
-    grid_calibration_path: Path,
+    geometry_kind: str,
+    calibration_path: Path,
     detection_config: DetectionConfig,
     multichannel_config: MultiChannelSEPConfig,
     field_mask_path: Path | None,
 ) -> None:
-    """Load immutable calibration state once in each detection worker process."""
+    """Load immutable pixel-ray geometry once in each detection worker."""
     global _MULTICHANNEL_WORKER_DETECTOR
 
-    calibration = load_grid_calibration(Path(grid_calibration_path))
+    source = Path(calibration_path).expanduser().resolve()
+    if geometry_kind == "grid":
+        calibration = load_grid_calibration(source)
+    elif geometry_kind == "stellar-camera":
+        product = load_stellar_camera_calibration_product(source)
+        calibration = stellar_camera_ray_calibration(
+            product.fit.calibration, source=str(source)
+        )
+    else:  # pragma: no cover - parent process controls this value
+        raise ValueError(f"Unknown multichannel geometry kind: {geometry_kind!r}")
     field_mask = (
         load_field_mask(Path(field_mask_path)) if field_mask_path is not None else None
     )
@@ -475,6 +495,7 @@ def execute_multichannel_detection_run(
     workers: int = 1,
     show_progress: bool = False,
     grid_calibration_path: Path | None = None,
+    stellar_camera_calibration_path: Path | None = None,
     field_mask_path: Path | None = None,
     detector: IndependentChannelSEPDetector | None = None,
     frame_loader: FrameLoader = load_gonet_image,
@@ -559,18 +580,32 @@ def execute_multichannel_detection_run(
                 "IndependentChannelSEPDetector"
             )
 
-        worker_grid_path = (
-            Path(grid_calibration_path).expanduser().resolve()
-            if grid_calibration_path is not None
-            else (
-                Path(grid_calibration.source).expanduser().resolve()
-                if grid_calibration.source is not None
-                else None
-            )
-        )
-        if worker_grid_path is None:
+        if (
+            grid_calibration_path is not None
+            and stellar_camera_calibration_path is not None
+        ):
             raise ValueError(
-                "Parallel multichannel detection requires a portable Grid "
+                "Parallel multichannel detection accepts only one geometry source"
+            )
+        if stellar_camera_calibration_path is not None:
+            worker_geometry_kind = "stellar-camera"
+            worker_calibration_path = (
+                Path(stellar_camera_calibration_path).expanduser().resolve()
+            )
+        else:
+            worker_geometry_kind = "grid"
+            worker_calibration_path = (
+                Path(grid_calibration_path).expanduser().resolve()
+                if grid_calibration_path is not None
+                else (
+                    Path(grid_calibration.source).expanduser().resolve()
+                    if grid_calibration.source is not None
+                    else None
+                )
+            )
+        if worker_calibration_path is None:
+            raise ValueError(
+                "Parallel multichannel detection requires a portable pixel-ray "
                 "calibration path"
             )
         worker_field_mask_path = (
@@ -598,7 +633,8 @@ def execute_multichannel_detection_run(
             max_workers=effective_workers,
             initializer=_initialize_multichannel_worker,
             initargs=(
-                worker_grid_path,
+                worker_geometry_kind,
+                worker_calibration_path,
                 detection_config,
                 multichannel_config,
                 worker_field_mask_path,
@@ -1804,6 +1840,423 @@ def _run_grid_cli_workflow(
     )
 
 
+def _run_stellar_calibrated_cli_workflow(
+    files: Iterable[Path],
+    *,
+    discovered_files: tuple[Path, ...],
+    algorithm: str,
+    detection_config: DetectionConfig,
+    tracking_config: TrackingConfig,
+    tracking_mode: TrackingMode,
+    channel: GONetChannel,
+    output_path: Path,
+    reference_image_path: Path | None,
+    store: ProductStore,
+    overwrite_products: bool,
+    stellar_camera_calibration_path: Path,
+    field_mask_path: Path | None,
+    detection_workers: int,
+    multichannel_config: MultiChannelSEPConfig | None,
+    spherical_tracking_config: SphericalTrackingConfig | None,
+    detection_only: bool,
+    catalog_cache_path: Path | None,
+    identify_stars: bool,
+    stellar_identification_config: StellarIdentificationConfig | None,
+    overwrite_identifications: bool,
+    metadata_loader: MetadataLoader,
+) -> RunSummary:
+    """Run Grid-free detection/identification using a stellar camera artifact."""
+    if algorithm != "sep":
+        raise ValueError("Stellar-camera astrometry currently requires --algorithm sep")
+    if tracking_mode == "legacy" and not detection_only:
+        raise ValueError(
+            "--stellar-calibration uses direct stellar identities; choose "
+            "--tracking-mode catalog or --tracking-mode hybrid"
+        )
+
+    stellar_path = Path(stellar_camera_calibration_path).expanduser().resolve()
+    stellar_product = load_stellar_camera_calibration_product(stellar_path)
+    stellar_calibration = stellar_product.fit.calibration
+    ray_calibration = stellar_camera_ray_calibration(
+        stellar_calibration,
+        source=str(stellar_path),
+    )
+    resolved_field_mask_path = (
+        Path(field_mask_path).expanduser().resolve()
+        if field_mask_path is not None
+        else None
+    )
+    field_mask = (
+        load_field_mask(resolved_field_mask_path)
+        if resolved_field_mask_path is not None
+        else None
+    )
+    if field_mask is not None:
+        field_mask.validate_against(
+            ray_calibration.image_shape,
+            ray_calibration.coordinate_convention,
+        )
+        logger.info(
+            "Using field mask %s | %.2f%% of sensor pixels excluded%s",
+            resolved_field_mask_path,
+            100.0 * field_mask.excluded_fraction,
+            f" | {field_mask.description}" if field_mask.description else "",
+        )
+
+    multi_config = multichannel_config or MultiChannelSEPConfig()
+    if (
+        multi_config.grid_search_radius_deg is not None
+        or multi_config.grid_acceptance_radius_deg is not None
+    ):
+        raise ValueError(
+            "Grid-radius detection caps cannot be used with --stellar-calibration"
+        )
+    spherical_config = spherical_tracking_config or SphericalTrackingConfig()
+    report_detector = IndependentChannelSEPDetector(
+        ray_calibration,
+        detection_config,
+        multi_config,
+        field_mask=field_mask,
+    )
+
+    expected_detection_id = stellar_multichannel_detection_product_id(
+        files,
+        detection_config,
+        multi_config,
+        stellar_path,
+        tracking_config.location_tolerance_m,
+        field_mask_path=resolved_field_mask_path,
+    )
+    detection_product: DetectionProduct | None = None
+    reused_detection = False
+    detected: DetectionRunArtifacts | None = None
+    if store.detections_path.exists() and not overwrite_products:
+        try:
+            detection_product = load_detection_product(
+                store.detections_path,
+                expected_product_id=expected_detection_id,
+            )
+            reused_detection = True
+            logger.info(
+                "Reusing multichannel detection product %s | %d images | "
+                "%d detections | %d skipped before detection",
+                store.detections_path,
+                len(detection_product.sequence.epochs),
+                detection_product.sequence.total_detections,
+                detection_product.skipped_file_count,
+            )
+        except ProductError as exc:
+            logger.warning(
+                "Ignoring incompatible detection product %s: %s",
+                store.detections_path,
+                exc,
+            )
+    if detection_product is None:
+        preflight = preflight_tracking_locations(
+            files,
+            tracking_config.location_tolerance_m,
+            metadata_loader=metadata_loader,
+            show_progress=True,
+        )
+        _log_location_preflight(preflight)
+        if not preflight.files:
+            raise ValueError("No usable images remain after GPS/location preflight")
+        detected = execute_multichannel_detection_run(
+            preflight.files,
+            detection_config,
+            multi_config,
+            ray_calibration,
+            location_tolerance_m=tracking_config.location_tolerance_m,
+            workers=detection_workers,
+            show_progress=True,
+            stellar_camera_calibration_path=stellar_path,
+            field_mask_path=resolved_field_mask_path,
+            detector=report_detector,
+        )
+        detection_product = DetectionProduct(
+            product_id=expected_detection_id,
+            algorithm=detected.algorithm,
+            detection_config=detection_config,
+            location_tolerance_m=tracking_config.location_tolerance_m,
+            sequence=detected.sequence,
+            reference_path=detected.reference_path,
+            discovered_files=discovered_files,
+            zero_gps_files=tuple(item.path for item in preflight.selection.zero_gps),
+            location_outlier_files=tuple(
+                item.path for item in preflight.selection.outliers
+            ),
+            metadata_errors=preflight.metadata_errors,
+            field_mask=field_mask,
+            field_mask_keep_margin_px=multi_config.field_mask_keep_margin_px,
+        )
+        written_detection = save_detection_product(
+            store.detections_path,
+            detection_product,
+        )
+        logger.info(
+            "Wrote multichannel detection product %s | %d images | %d detections",
+            written_detection,
+            len(detection_product.sequence.epochs),
+            detection_product.sequence.total_detections,
+        )
+    else:
+        detection_product.sequence.validate_locations(
+            tracking_config.location_tolerance_m
+        )
+        _log_sequence_timing(detection_product.sequence)
+
+    report_reference_path = _resolve_report_reference_path(
+        detection_product.sequence,
+        detection_product.reference_path,
+        reference_image_path,
+    )
+    if (
+        detected is not None
+        and report_reference_path == detection_product.reference_path
+    ):
+        reference_prepared = detected.reference_prepared
+        reference_catalog = detected.reference_catalog
+    else:
+        reference_prepared, reference_catalog = _prepare_multichannel_report_reference(
+            detection_product.sequence,
+            report_reference_path,
+            report_detector,
+        )
+    if reference_image_path is not None:
+        logger.info("Using report reference image %s", report_reference_path)
+
+    identification_result: StellarIdentificationResult | None = None
+    identification_product: StellarCameraIdentificationProduct | None = None
+    reused_identification = False
+    use_identification = identify_stars or tracking_mode in {"catalog", "hybrid"}
+    cache_path: Path | None = None
+    if use_identification:
+        legacy_config = stellar_identification_config or StellarIdentificationConfig()
+        direct_config = StellarCameraIdentificationConfig(
+            limiting_magnitude=legacy_config.limiting_magnitude,
+            min_catalog_altitude_deg=legacy_config.min_catalog_altitude_deg,
+            match_radius_px=stellar_product.config.final_match_radius_px,
+            minimum_catalog_track_length=legacy_config.minimum_catalog_track_length,
+        )
+        cache_path = (
+            (catalog_cache_path or store.bright_star_catalog_path)
+            .expanduser()
+            .resolve()
+        )
+        catalog_was_cached = cache_path.exists()
+        bright_catalog = load_or_fetch_bright_star_catalog(cache_path)
+        if catalog_was_cached:
+            logger.info("Reusing bright-star catalog cache %s", cache_path)
+        else:
+            logger.info(
+                "Fetched and cached Bright Star Catalogue %s | %d stars",
+                cache_path,
+                len(bright_catalog.stars),
+            )
+        expected_identification_id = stellar_camera_identification_product_id(
+            detection_product.product_id,
+            stellar_path,
+            cache_path,
+            direct_config,
+        )
+        if (
+            reused_detection
+            and store.stellar_camera_identifications_path.exists()
+            and not overwrite_products
+            and not overwrite_identifications
+        ):
+            try:
+                identification_product = load_stellar_camera_identification_product(
+                    store.stellar_camera_identifications_path,
+                    detection_product.sequence,
+                    expected_product_id=expected_identification_id,
+                    expected_detection_product_id=detection_product.product_id,
+                )
+                reused_identification = True
+                identification_result = identification_product.result
+                logger.info(
+                    "Reusing stellar-camera identifications %s | %d/%d "
+                    "star-epochs matched | median/P90 residual %.3f/%.3f arcmin",
+                    store.stellar_camera_identifications_path,
+                    identification_result.matched_star_count,
+                    identification_result.visible_star_count,
+                    identification_result.fit_median_residual_arcmin,
+                    identification_result.fit_p90_residual_arcmin,
+                )
+            except ProductError as exc:
+                logger.warning(
+                    "Ignoring incompatible stellar-camera identifications %s: %s",
+                    store.stellar_camera_identifications_path,
+                    exc,
+                )
+        if identification_product is None:
+            catalog_stars = bright_catalog.query_bright_stars(
+                detection_product.sequence.epochs[0].exposure_midpoint,
+                direct_config.limiting_magnitude,
+            )
+            identification_result = StellarCameraSequenceMatcher(direct_config).match(
+                detection_product.sequence,
+                stellar_calibration,
+                catalog_stars,
+                field_mask=detection_product.field_mask,
+                field_mask_keep_margin_px=(detection_product.field_mask_keep_margin_px),
+                show_progress=True,
+            )
+            identification_product = StellarCameraIdentificationProduct(
+                product_id=expected_identification_id,
+                detection_product_id=detection_product.product_id,
+                stellar_camera_calibration_path=stellar_path,
+                catalog_path=cache_path,
+                config=direct_config,
+                result=identification_result,
+            )
+            written_identifications = save_stellar_camera_identification_product(
+                store.stellar_camera_identifications_path,
+                identification_product,
+            )
+            frame_counts = np.asarray(
+                [epoch.matched_star_count for epoch in identification_result.epochs],
+                dtype=np.float64,
+            )
+            catalog_tracks = identification_result.catalog_tracks(
+                detection_product.sequence,
+                min_track_length=direct_config.minimum_catalog_track_length,
+            )
+            logger.info(
+                "Wrote stellar-camera identifications %s | %d/%d star-epochs "
+                "matched | %d unmatched detections | %d catalog tracks | "
+                "median/P90 residual %.3f/%.3f arcmin | matches/frame median "
+                "%.1f P10/P90 %.1f/%.1f",
+                written_identifications,
+                identification_result.matched_star_count,
+                identification_result.visible_star_count,
+                detection_product.sequence.total_detections
+                - identification_result.matched_star_count,
+                len(catalog_tracks.tracks),
+                identification_result.fit_median_residual_arcmin,
+                identification_result.fit_p90_residual_arcmin,
+                float(np.median(frame_counts)),
+                float(np.percentile(frame_counts, 10)),
+                float(np.percentile(frame_counts, 90)),
+            )
+
+    result = ImagePlaneTrackingResult(detection_product.sequence, ())
+    catalog_track_count = 0
+    fallback_track_count = 0
+    if detection_only:
+        logger.info(
+            "Detection-only run requested; skipping temporal tracking and "
+            "downstream solving"
+        )
+    elif tracking_mode == "catalog":
+        if identification_result is None or identification_product is None:
+            raise RuntimeError("Catalog tracking requires stellar identifications")
+        result = identification_result.catalog_tracks(
+            detection_product.sequence,
+            min_track_length=(
+                identification_product.config.minimum_catalog_track_length
+            ),
+        )
+        catalog_track_count = len(result.tracks)
+        logger.info(
+            "Built %d stellar-camera catalog tracks | %d assigned detections | "
+            "%d unassigned",
+            catalog_track_count,
+            result.assigned_detection_count,
+            result.unassigned_detection_count,
+        )
+    elif tracking_mode == "hybrid":
+        if identification_result is None or identification_product is None:
+            raise RuntimeError("Hybrid tracking requires stellar identifications")
+        catalog_result = identification_result.catalog_tracks(
+            detection_product.sequence,
+            min_track_length=(
+                identification_product.config.minimum_catalog_track_length
+            ),
+        )
+        catalog_track_count = len(catalog_result.tracks)
+        unmatched_sequence = unmatched_detection_sequence(
+            detection_product.sequence,
+            identification_result,
+        )
+        fallback_result = ImagePlaneTrackingResult(unmatched_sequence, ())
+        if (
+            len(unmatched_sequence.epochs) >= spherical_config.min_track_length
+            and unmatched_sequence.total_detections > 0
+        ):
+            fallback_result = _track_spherical_sequence(
+                unmatched_sequence,
+                ray_calibration,
+                spherical_config,
+            )
+        fallback_track_count = len(fallback_result.tracks)
+        result = combine_catalog_and_fallback_tracks(
+            detection_product.sequence,
+            catalog_result,
+            fallback_result,
+        )
+        logger.info(
+            "Built stellar-camera hybrid tracks | %d catalog | %d fallback | "
+            "%d total | %d assigned detections | %d unassigned",
+            catalog_track_count,
+            fallback_track_count,
+            len(result.tracks),
+            result.assigned_detection_count,
+            result.unassigned_detection_count,
+        )
+
+    artifacts = TrackingRunArtifacts(
+        files=tuple(epoch.source_path for epoch in detection_product.sequence.epochs),
+        algorithm=detection_product.algorithm,
+        sequence=detection_product.sequence,
+        tracking_result=result,
+        reference_path=report_reference_path,
+        reference_catalog=reference_catalog,
+        reference_prepared=reference_prepared,
+        grid_calibration=ray_calibration,
+        tracking_mode=tracking_mode,
+        multichannel_detection_config=multi_config,
+        spherical_tracking_config=spherical_config,
+        stellar_merge_config=StellarTrackMergeConfig(),
+        stellar_identification_result=identification_result,
+    )
+    raw = load_gonet_file_raw(artifacts.reference_path, parse_metadata=False)
+    display_data = get_raw_channel(raw, channel)
+    written = write_tracking_report_pdf(
+        output_path,
+        image_data=display_data,
+        channel=channel,
+        artifacts=artifacts,
+        detection_config=detection_config,
+        tracking_config=tracking_config,
+    )
+    return RunSummary(
+        output_path=written,
+        file_count=len(artifacts.files),
+        detection_count=artifacts.sequence.total_detections,
+        track_count=len(result.tracks),
+        assigned_detection_count=result.assigned_detection_count,
+        unassigned_detection_count=result.unassigned_detection_count,
+        skipped_file_count=detection_product.skipped_file_count,
+        zero_gps_count=len(detection_product.zero_gps_files),
+        location_outlier_count=len(detection_product.location_outlier_files),
+        metadata_error_count=len(detection_product.metadata_errors),
+        detection_product_path=store.detections_path.resolve(),
+        stellar_identification_product_path=(
+            store.stellar_camera_identifications_path.resolve()
+            if identification_product is not None
+            else None
+        ),
+        stellar_camera_calibration_product_path=stellar_path,
+        reused_detection_product=reused_detection,
+        reused_stellar_identification_product=reused_identification,
+        reused_stellar_camera_calibration_product=True,
+        tracking_mode=tracking_mode,
+        catalog_track_count=catalog_track_count,
+        fallback_track_count=fallback_track_count,
+    )
+
+
 def run_cli_workflow(
     inputs: Iterable[Path],
     *,
@@ -1818,6 +2271,7 @@ def run_cli_workflow(
     output_dir: Path | None = None,
     overwrite_products: bool = False,
     grid_calibration_path: Path | None = None,
+    stellar_camera_calibration_path: Path | None = None,
     field_mask_path: Path | None = None,
     detection_workers: int = 1,
     multichannel_config: MultiChannelSEPConfig | None = None,
@@ -1863,11 +2317,26 @@ def run_cli_workflow(
         raise ValueError("Detection workers must be at least one")
     if tracking_mode not in {"legacy", "catalog", "hybrid"}:
         raise ValueError(f"Unsupported tracking mode: {tracking_mode!r}")
-    if tracking_mode != "legacy" and grid_calibration_path is None:
-        raise ValueError("Catalog and hybrid tracking require --grid-calibration")
-    if detection_only and grid_calibration_path is None:
-        raise ValueError("--detection-only requires --grid-calibration")
-    if grid_calibration_path is None and len(discovery.files) < 2:
+    if (
+        grid_calibration_path is not None
+        and stellar_camera_calibration_path is not None
+    ):
+        raise ValueError(
+            "Use either --grid-calibration or --stellar-calibration, not both"
+        )
+    has_ray_geometry = (
+        grid_calibration_path is not None or stellar_camera_calibration_path is not None
+    )
+    if tracking_mode != "legacy" and not has_ray_geometry:
+        raise ValueError(
+            "Catalog and hybrid tracking require --grid-calibration or "
+            "--stellar-calibration"
+        )
+    if detection_only and not has_ray_geometry:
+        raise ValueError(
+            "--detection-only requires --grid-calibration or --stellar-calibration"
+        )
+    if not has_ray_geometry and len(discovery.files) < 2:
         raise ValueError(
             "Legacy image-plane tracking requires at least two candidate GONet "
             "images after discovery"
@@ -1877,18 +2346,57 @@ def run_cli_workflow(
     store = ProductStore(product_dir)
     store.ensure()
 
-    if field_mask_path is not None and grid_calibration_path is None:
-        raise ValueError("--field-mask requires --grid-calibration")
-    if identify_stars and grid_calibration_path is None:
-        raise ValueError("--identify-stars requires --grid-calibration")
+    if field_mask_path is not None and not has_ray_geometry:
+        raise ValueError(
+            "--field-mask requires --grid-calibration or --stellar-calibration"
+        )
+    if identify_stars and not has_ray_geometry:
+        raise ValueError(
+            "--identify-stars requires --grid-calibration or --stellar-calibration"
+        )
     if fit_stellar_calibration and grid_calibration_path is None:
         raise ValueError(
             "Initial stellar-camera calibration currently requires "
             "--grid-calibration to bootstrap stellar identities"
         )
-    if detection_workers != 1 and grid_calibration_path is None:
+    if fit_stellar_calibration and stellar_camera_calibration_path is not None:
         raise ValueError(
-            "--workers greater than 1 currently requires --grid-calibration"
+            "--fit-stellar-calibration and --stellar-calibration are mutually exclusive"
+        )
+    if detection_workers != 1 and not has_ray_geometry:
+        raise ValueError(
+            "--workers greater than 1 requires calibrated multichannel geometry"
+        )
+
+    if stellar_camera_calibration_path is not None:
+        if solve_orientation:
+            raise ValueError(
+                "--solve-orientation is obsolete when --stellar-calibration already "
+                "provides absolute camera attitude"
+            )
+        return _run_stellar_calibrated_cli_workflow(
+            discovery.files,
+            discovered_files=tuple(discovery.files),
+            algorithm=algorithm,
+            detection_config=detection_config,
+            tracking_config=tracking_config,
+            tracking_mode=tracking_mode,
+            channel=channel,
+            output_path=output_path,
+            reference_image_path=reference_image_path,
+            store=store,
+            overwrite_products=overwrite_products,
+            stellar_camera_calibration_path=stellar_camera_calibration_path,
+            field_mask_path=field_mask_path,
+            detection_workers=detection_workers,
+            multichannel_config=multichannel_config,
+            spherical_tracking_config=spherical_tracking_config,
+            detection_only=detection_only,
+            catalog_cache_path=catalog_cache_path,
+            identify_stars=identify_stars,
+            stellar_identification_config=stellar_identification_config,
+            overwrite_identifications=overwrite_identifications,
+            metadata_loader=metadata_loader,
         )
 
     if grid_calibration_path is not None:

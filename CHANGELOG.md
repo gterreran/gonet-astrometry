@@ -19,6 +19,11 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Direct reuse of ``stellar_camera_calibration.npz`` on later observing nights
+  through ``--stellar-calibration``. Calibrated runs perform multichannel SEP
+  detection, per-frame catalog projection/matching, catalog-labelled tracking,
+  and optional hybrid spherical fallback without loading Grid geometry; direct
+  associations are cached in ``stellar_camera_identifications.npz``.
 - Grid-independent direct stellar camera calibration with a compact radial
   ``poly3`` intrinsic model, one camera-to-ENU attitude, conservative
   Grid-assisted seed auditing, direct catalog rematching, grouped-star

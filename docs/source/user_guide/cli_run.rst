@@ -140,8 +140,10 @@ default layout is::
        tracks.npz                  # legacy image-plane runs
        temporal_tracks.npz         # Grid-assisted legacy spherical tracking
        stellar_tracks.npz          # Grid-assisted legacy stellar merge
-       stellar_identifications.npz # catalog identification
-       fallback_temporal_tracks.npz # hybrid unmatched-detection fallback
+       stellar_identifications.npz # Grid-bootstrap catalog identification
+       stellar_camera_calibration.npz # direct portable camera geometry
+       stellar_camera_identifications.npz # later Grid-free catalog matching
+       fallback_temporal_tracks.npz # Grid hybrid unmatched-detection fallback
        sidereal_rotation.npz       # legacy Grid-assisted sidereal fit
        bright_star_catalog.npz     # after first catalog-assisted operation
        absolute_orientation.npz    # legacy --solve-orientation path
@@ -234,7 +236,8 @@ has been fitted.
 PDF diagnostic
 --------------
 
-Without a Grid calibration the generated PDF contains two pages. The first is
+Without a legacy Grid sidereal solution the generated PDF contains two pages.
+The first is
 the static image-plane
 tracking view based on the first discovered input image: selected compact native
 channel, usable-field boundary, dynamic bright-region mask, reference-image
@@ -385,6 +388,49 @@ the bootstrap identification product remains only in provenance.
 See :doc:`../concepts/stellar_camera_calibration` for the model-sweep results,
 reasoning behind the Grid-to-stars transition, and measured observational error
 floor.
+
+Using an existing stellar calibration
+-------------------------------------
+
+After ``stellar_camera_calibration.npz`` has been produced for a fixed camera,
+later observing sequences no longer need ``--grid-calibration``. Supply the
+portable stellar artifact directly::
+
+   gonet-astrometry run /path/to/later-night \
+       --algorithm sep \
+       --stellar-calibration /path/to/stellar_camera_calibration.npz \
+       --field-mask /path/to/field_mask.npz \
+       --field-mask-keep-margin-px 32 \
+       --workers 8 \
+       --tracking-mode catalog \
+       --output-dir later_night_astrometry
+
+The stellar calibration supplies the sensor shape, intrinsic pixel-to-ray
+mapping, and absolute camera-to-ENU attitude. Independent-channel SEP detection
+therefore retains the same production behavior without loading the Grid package.
+Catalog RA/Dec values are propagated to each exposure time/GPS location,
+projected directly to raw full-sensor pixels, and associated one-to-one using
+the calibration's production direct-match radius (5 px for the validated Adler
+artifact).
+
+The resulting associations are cached separately as
+``stellar_camera_identifications.npz``. This product records predicted raw
+pixels, catalog identities, explicit nondetections, and residuals relative to
+the fixed stellar camera geometry. Compatible reruns reuse both detections and
+identifications.
+
+``--tracking-mode hybrid`` is also supported. Catalog-labelled stars remain the
+trusted stellar population, while the existing spherical tracker receives only
+unmatched detections. Its pixel-to-ray geometry is supplied by the direct
+stellar camera model, so this fallback also has no Grid dependency. Legacy
+sidereal fragment merging and ``--solve-orientation`` are intentionally not
+part of the stellar-calibration path: the portable stellar artifact already
+contains absolute attitude.
+
+``--grid-calibration`` and ``--stellar-calibration`` are mutually exclusive.
+Use the Grid path to create the first stellar calibration; use the stellar path
+for normal subsequent observations while the physical camera/lens configuration
+remains unchanged.
 
 
 Absolute camera orientation

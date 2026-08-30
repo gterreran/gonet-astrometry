@@ -26,8 +26,11 @@ direction transformed through:
 The Grid calibration is used only to bootstrap the first reliable stellar
 identities.  It is deliberately excluded from the final intrinsic geometry,
 because the physical Grid measurement contains both camera distortion and
-calibration-target imperfections.  See :doc:`stellar_camera_calibration` for
-the empirical model-selection evidence and production fitting policy.
+calibration-target imperfections. Once a portable stellar calibration exists,
+new observing sequences use it directly for multichannel detection geometry,
+per-frame catalog projection, and optional spherical fallback tracking; the Grid
+package is not loaded. See :doc:`stellar_camera_calibration` for the empirical
+model-selection evidence and production fitting policy.
 
 Architecture boundaries
 -----------------------
@@ -39,7 +42,7 @@ coupling across the astrometry package.
 The initial boundaries are:
 
 ``io``
-   Native image and Grid-calibration loading protocols.
+   Native image and portable calibration-product loading protocols.
 ``adapters``
    GONet Wizard-specific compatibility code.
 ``detection``

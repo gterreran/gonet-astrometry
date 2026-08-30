@@ -35,6 +35,7 @@ from gonet_astrometry.catalogs.base import CatalogStar
 from gonet_astrometry.detection.field_mask import FieldMask
 from gonet_astrometry.geometry.horizon import catalog_stars_to_enu_rays, enu_to_altaz
 from gonet_astrometry.models.frame import ObserverLocation
+from gonet_astrometry.models.grid import GridCalibration
 from gonet_astrometry.tracking.catalog_identification import StellarIdentificationResult
 from gonet_astrometry.tracking.sequence import DetectionSequence
 
@@ -50,6 +51,10 @@ _THETA_SCALE = np.pi / 2.0
 _COORDINATE_CONVENTION = (
     "native full sensor: x=column increasing right, y=row increasing down; "
     "camera +z=optical axis; camera +x/+y aligned with sensor x/y"
+)
+_IMAGE_COORDINATE_CONVENTION = (
+    "x=column,y=row;origin=upper-left;+x=right;+y=down;"
+    "pixel-centers-at-integer-coordinates"
 )
 
 
@@ -247,6 +252,24 @@ class StellarCameraCalibration:
         enu = camera @ np.asarray(self.camera_to_enu, dtype=np.float64).T
         return enu.reshape(x_values.shape + (3,))
 
+    def pixel_to_camera_ray(
+        self,
+        x: FloatArray | float,
+        y: FloatArray | float,
+        *,
+        extrapolate: bool = False,
+    ) -> FloatArray:
+        """Invert raw pixels to intrinsic camera-frame unit directions.
+
+        This is the Grid-independent ray geometry consumed by spherical fallback
+        tracking and other internal algorithms that need only pixel-to-ray
+        conversion rather than absolute ENU orientation.
+        """
+        enu = self.pixel_to_enu(x, y, extrapolate=extrapolate)
+        shape = enu.shape
+        camera = enu.reshape((-1, 3)) @ np.asarray(self.camera_to_enu, dtype=np.float64)
+        return camera.reshape(shape)
+
     def _invert_radius(self, radius: FloatArray, *, extrapolate: bool) -> FloatArray:
         parsed = np.asarray(radius, dtype=np.float64)
         t_limit = self._radial_t_limit(extrapolate=extrapolate)
@@ -285,6 +308,37 @@ class StellarCameraCalibration:
                 "extrapolation is never allowed beyond a non-monotonic radial "
                 "mapping"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class StellarCameraRayTransform:
+    """Pixel-to-camera-ray adapter for generic spherical geometry consumers."""
+
+    calibration: StellarCameraCalibration
+
+    def pixel_to_ray(self, x: FloatArray, y: FloatArray) -> FloatArray:
+        """Convert native sensor pixels to intrinsic camera-frame rays."""
+        return self.calibration.pixel_to_camera_ray(x, y, extrapolate=True)
+
+
+def stellar_camera_ray_calibration(
+    calibration: StellarCameraCalibration,
+    *,
+    source: str | None = None,
+) -> GridCalibration:
+    """Expose a stellar camera model through the common pixel-ray contract.
+
+    The returned wrapper contains no Grid-derived geometry.  ``GridCalibration``
+    is retained here only as the historical package-level container used by
+    source detection and spherical tracking; its transform is the direct stellar
+    radial model.
+    """
+    return GridCalibration(
+        transform=StellarCameraRayTransform(calibration),
+        image_shape=calibration.image_shape,
+        coordinate_convention=_IMAGE_COORDINATE_CONVENTION,
+        source=source,
+    )
 
 
 @dataclass(frozen=True, slots=True)

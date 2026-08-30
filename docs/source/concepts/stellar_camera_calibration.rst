@@ -196,6 +196,73 @@ start the first fit. The intrinsic model is recorded explicitly as
 calibrated angular range so the public forward and inverse transformations are
 well defined.
 
+Using the stellar calibration on later observations
+---------------------------------------------------
+
+Once ``stellar_camera_calibration.npz`` exists, the Grid is no longer required
+for observations made with the same fixed camera/lens geometry.  The portable
+artifact supplies both pieces that the initial bootstrap had to infer through
+the Grid: the intrinsic pixel-to-ray mapping and the absolute camera-to-ENU
+attitude.  A later observing sequence can therefore follow the shorter path
+
+.. code-block:: text
+
+   raw images
+       |
+       v
+   multichannel SEP detections
+       |
+       +---- stellar_camera_calibration.npz
+       |                 |
+       |                 v
+       |       catalog RA/Dec + time + GPS
+       |                 |
+       |                 v
+       +----------> predicted raw (x, y)
+                         |
+                    5 px one-to-one match
+                         |
+                         v
+              stellar_camera_identifications.npz
+                         |
+                  catalog-labelled tracks
+
+The direct matcher uses the calibration's validated ``poly3`` geometry; it does
+not solve another frame-wide attitude and does not consult any Grid coordinate.
+Only catalog directions inside the stellar-calibrated angular range are
+projected.  The static field mask and its keep margin remain pixel-space
+constraints and may be reused unchanged when their sensor convention matches.
+
+The command-line entry point is ``--stellar-calibration``.  Normal operation
+uses catalog tracking, while hybrid mode additionally runs the existing
+spherical temporal tracker on detections left unmatched by the catalog.  In
+hybrid mode the fallback ray geometry is also supplied by the stellar camera
+model; no Grid inversion is involved.  Fallback tracks remain generic coherent
+objects and are not promoted to calibration stars merely because they track
+well.
+
+For example::
+
+   gonet-astrometry run /data/night/*.jpg \
+       --algorithm sep \
+       --stellar-calibration /calibration/stellar_camera_calibration.npz \
+       --field-mask /calibration/site_field_mask.npz \
+       --field-mask-keep-margin-px 32 \
+       --workers 8 \
+       --tracking-mode catalog \
+       --output-dir /data/night_astrometry
+
+The first run writes ``detections.npz`` and
+``stellar_camera_identifications.npz`` in the new output directory.  Compatible
+reruns reuse both products.  A Bright Star Catalogue cache is still loaded once
+per output directory (or from ``--catalog-cache``) and propagated to each
+exposure time.
+
+This makes the Grid a one-time bootstrap instrument rather than an operational
+dependency of the calibrated camera.  A new Grid bootstrap is needed only when
+no stellar calibration exists or when the physical camera/lens geometry has
+changed enough that the existing stellar artifact is no longer applicable.
+
 Current limitations
 -------------------
 
@@ -203,9 +270,10 @@ Current limitations
   motion propagation is not yet applied.
 * Atmospheric refraction is intentionally excluded from the intrinsic camera
   geometry.  A future apparent-sky layer may model it separately.
-* The first production calibration still requires Grid-assisted stellar
-  identifications as a bootstrap.  Once a stellar camera calibration exists,
-  a later workflow can use it directly for catalog matching without the Grid.
+* Creating the *first* stellar camera calibration still requires a bootstrap
+  correspondence set.  The production bootstrap currently comes from the Grid;
+  later observing sequences use the stellar calibration directly and do not
+  require the Grid.
 * Validation metrics are grouped by catalog star so a held-out star is absent
   from its fold's fit.  This is intentionally stricter than random row-level
   validation of repeatedly observed stellar tracks.

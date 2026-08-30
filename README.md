@@ -186,6 +186,16 @@ its grouped-star validation statistics and calibrated angular range. The full
 model-selection evidence and rationale are documented in
 ``docs/source/concepts/stellar_camera_calibration.rst``.
 
+Once that artifact exists, later observations from the same fixed camera can
+skip the Grid entirely. Supply ``--stellar-calibration
+/path/to/stellar_camera_calibration.npz`` together with ``--tracking-mode
+catalog`` (or ``hybrid``). Multichannel detection uses the stellar model's sensor
+geometry, catalog stars are propagated from RA/Dec to each exposure time/GPS
+location and projected directly to raw pixels, and the resulting associations
+are cached as ``stellar_camera_identifications.npz``. Hybrid fallback also uses
+the stellar pixel-to-ray model, so the Grid package is not an operational
+dependency once a stellar calibration has been established.
+
 The fitted rotation pole still leaves one exact camera-attitude twist around the
 celestial axis. Add ``--solve-orientation`` to resolve that final degree of
 freedom by matching de-rotated sidereal-consistent tracks to a cached bright-star

@@ -254,12 +254,41 @@ def validated_pixel_rays(
 ) -> PixelRayConversion:
     """Convert pixels with the validity information needed by spherical fits."""
     transform = calibration.transform
-    if not isinstance(transform, PortableGridTransform):
-        raise TypeError("Grid calibration does not use the portable Grid transform")
-    return transform.convert(
-        x,
-        y,
-        reprojection_tolerance_px=reprojection_tolerance_px,
+    if isinstance(transform, PortableGridTransform):
+        return transform.convert(
+            x,
+            y,
+            reprojection_tolerance_px=reprojection_tolerance_px,
+        )
+
+    x_array, y_array = np.broadcast_arrays(
+        np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+    )
+    rays = np.asarray(transform.pixel_to_ray(x_array, y_array), dtype=np.float64)
+    expected_shape = x_array.shape + (3,)
+    if rays.shape != expected_shape:
+        raise ValueError(
+            "Pixel-ray transform returned invalid shape: "
+            f"expected {expected_shape}, got {rays.shape}"
+        )
+    norms = np.linalg.norm(rays, axis=-1)
+    valid = np.all(np.isfinite(rays), axis=-1) & np.isfinite(norms) & (norms > 0.0)
+    unit = np.full_like(rays, np.nan, dtype=np.float64)
+    unit[valid] = rays[valid] / norms[valid, None]
+    r_deg = np.full(x_array.shape, np.nan, dtype=np.float64)
+    theta_deg = np.full(x_array.shape, np.nan, dtype=np.float64)
+    if np.any(valid):
+        r_deg[valid] = np.rad2deg(np.arccos(np.clip(unit[..., 2][valid], -1.0, 1.0)))
+        theta_deg[valid] = np.mod(
+            np.rad2deg(np.arctan2(unit[..., 1][valid], unit[..., 0][valid])),
+            360.0,
+        )
+    return PixelRayConversion(
+        rays=unit,
+        valid=np.asarray(valid, dtype=np.bool_),
+        reprojection_error_px=np.where(valid, 0.0, np.inf),
+        r_deg=r_deg,
+        theta_deg=theta_deg,
     )
 
 

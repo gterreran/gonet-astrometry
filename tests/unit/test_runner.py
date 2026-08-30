@@ -1621,3 +1621,170 @@ def test_grid_hybrid_tracking_groups_catalog_labels_and_tracks_only_unmatched(
     assert detection_calls == [1]
     assert matcher_calls == [1]
     assert fallback_calls == [3]
+
+
+def test_stellar_calibration_run_identifies_without_grid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from gonet_astrometry.calibration.stellar_camera import StellarCameraCalibration
+    from gonet_astrometry.tracking.catalog_identification import (
+        StellarIdentification,
+        StellarIdentificationEpoch,
+        StellarIdentificationResult,
+    )
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+
+    paths = tuple((tmp_path / f"stellar-{index}.jpg").resolve() for index in range(2))
+    for path in paths:
+        path.write_bytes(b"raw")
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = tuple(
+        DetectionCatalog(
+            str(path),
+            (
+                Detection(0, 5.0 + index, 6.0, 10.0, 10.0, 0.5, 0.5),
+            ),
+            "sep-independent-channels",
+        )
+        for index, path in enumerate(paths)
+    )
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=True)
+        ]
+    )
+    detected = DetectionRunArtifacts(
+        files=paths,
+        algorithm="sep-independent-channels",
+        sequence=sequence,
+        reference_path=paths[0],
+        reference_catalog=catalogs[0],
+        reference_prepared=_prepared(),
+    )
+    stellar_path = tmp_path / "stellar_camera_calibration.npz"
+    stellar_path.write_bytes(b"stellar calibration fingerprint")
+    catalog_path = tmp_path / "bright_star_catalog.npz"
+    catalog_path.write_bytes(b"catalog fingerprint")
+    calibration = StellarCameraCalibration(
+        image_shape=(20, 20),
+        camera_to_enu=np.eye(3),
+        center_x_px=10.0,
+        center_y_px=10.0,
+        radial_c1_px=8.0,
+        radial_c3_px=0.5,
+        calibrated_theta_max_deg=60.0,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_stellar_camera_calibration_product",
+        lambda path: SimpleNamespace(
+            fit=SimpleNamespace(calibration=calibration),
+            config=SimpleNamespace(final_match_radius_px=5.0),
+        ),
+    )
+
+    class FakeMultichannelDetector:
+        name = "sep-independent-channels"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def prepare_report_image(self, frame):
+            del frame
+            return _prepared()
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.IndependentChannelSEPDetector",
+        FakeMultichannelDetector,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.execute_multichannel_detection_run",
+        lambda *args, **kwargs: detected,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_or_fetch_bright_star_catalog",
+        lambda cache_path: SimpleNamespace(
+            stars=(object(),),
+            query_bright_stars=lambda epoch, limiting_magnitude: (object(),),
+        ),
+    )
+    identification_result = StellarIdentificationResult(
+        grid_to_enu=np.eye(3),
+        bootstrap_frame_identifier="stellar-camera-calibration",
+        epochs=tuple(
+            StellarIdentificationEpoch(
+                frame_identifier=str(path),
+                visible_stars=(
+                    StellarIdentification(
+                        catalog_identifier="HR 1",
+                        catalog_magnitude=1.0,
+                        azimuth_deg=0.0,
+                        altitude_deg=80.0,
+                        predicted_x=5.0 + index,
+                        predicted_y=6.0,
+                        detection_identifier=0,
+                        residual_px=0.1,
+                        residual_arcmin=0.2,
+                        match_kind="primary",
+                    ),
+                ),
+            )
+            for index, path in enumerate(paths)
+        ),
+        fit_pair_count=2,
+        fit_median_residual_arcmin=0.2,
+        fit_p90_residual_arcmin=0.2,
+    )
+    matcher_calls: list[int] = []
+
+    class FakeMatcher:
+        def __init__(self, config):
+            del config
+
+        def match(self, *args, **kwargs):
+            del args, kwargs
+            matcher_calls.append(1)
+            return identification_result
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.StellarCameraSequenceMatcher", FakeMatcher
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_file_raw",
+        lambda path, parse_metadata=False: object(),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.get_raw_channel",
+        lambda raw, channel: np.zeros((10, 10), dtype=float),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.write_tracking_report_pdf",
+        lambda path, **kwargs: path.resolve(),
+    )
+
+    product_dir = tmp_path / "products"
+    summary = run_cli_workflow(
+        inputs=[tmp_path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=TrackingConfig(),
+        tracking_mode="catalog",
+        channel="green1",
+        output_path=tmp_path / "stellar.pdf",
+        output_dir=product_dir,
+        stellar_camera_calibration_path=stellar_path,
+        catalog_cache_path=catalog_path,
+        metadata_loader=lambda source: frames[paths.index(source)].metadata,
+    )
+
+    assert summary.track_count == 1
+    assert summary.catalog_track_count == 1
+    assert summary.assigned_detection_count == 2
+    assert summary.stellar_identification_product_path == (
+        product_dir / "stellar_camera_identifications.npz"
+    ).resolve()
+    assert summary.stellar_camera_calibration_product_path == stellar_path.resolve()
+    assert matcher_calls == [1]
