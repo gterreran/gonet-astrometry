@@ -1175,6 +1175,10 @@ def test_grid_detection_only_can_write_and_reuse_stellar_identifications(
 ) -> None:
     from types import SimpleNamespace
 
+    from gonet_astrometry.calibration.stellar_camera import (
+        StellarCameraCalibration,
+        StellarCameraCalibrationFit,
+    )
     from gonet_astrometry.models.grid import GridCalibration
     from gonet_astrometry.tracking.catalog_identification import (
         StellarIdentification,
@@ -1295,6 +1299,46 @@ def test_grid_detection_only_can_write_and_reuse_stellar_identifications(
             return identification_result
 
     monkeypatch.setattr("gonet_astrometry.runner.CatalogSequenceMatcher", FakeMatcher)
+
+    stellar_calibration_fit = StellarCameraCalibrationFit(
+        calibration=StellarCameraCalibration(
+            image_shape=(20, 20),
+            camera_to_enu=np.eye(3),
+            center_x_px=10.0,
+            center_y_px=10.0,
+            radial_c1_px=20.0,
+            radial_c3_px=-1.0,
+            calibrated_theta_max_deg=60.0,
+        ),
+        seed_measurement_count=10,
+        seed_star_count=4,
+        trusted_seed_star_count=4,
+        rejected_seed_star_ids=(),
+        direct_match_count=9,
+        direct_star_count=4,
+        direct_match_median_px=0.5,
+        direct_match_p90_px=1.0,
+        calibration_measurement_count=8,
+        calibration_star_count=4,
+        cv_median_arcmin=2.0,
+        cv_p90_arcmin=5.0,
+        cv_p90_px=1.5,
+    )
+    calibrator_calls: list[int] = []
+
+    class FakeStellarCameraCalibrator:
+        def __init__(self, config):
+            del config
+
+        def fit(self, *args, **kwargs):
+            del args, kwargs
+            calibrator_calls.append(1)
+            return stellar_calibration_fit
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.StellarCameraCalibrator",
+        FakeStellarCameraCalibrator,
+    )
     monkeypatch.setattr(
         "gonet_astrometry.runner.load_gonet_file_raw",
         lambda path, parse_metadata=False: object(),
@@ -1320,6 +1364,7 @@ def test_grid_detection_only_can_write_and_reuse_stellar_identifications(
         grid_calibration_path=grid_path,
         catalog_cache_path=catalog_path,
         identify_stars=True,
+        fit_stellar_calibration=True,
         detection_only=True,
         metadata_loader=lambda source: frame.metadata,
     )
@@ -1329,8 +1374,13 @@ def test_grid_detection_only_can_write_and_reuse_stellar_identifications(
     assert first.stellar_identification_product_path == (
         product_dir / "stellar_identifications.npz"
     ).resolve()
+    assert first.reused_stellar_camera_calibration_product is False
+    assert first.stellar_camera_calibration_product_path == (
+        product_dir / "stellar_camera_calibration.npz"
+    ).resolve()
     assert detection_calls == [1]
     assert matcher_calls == [1]
+    assert calibrator_calls == [1]
 
     monkeypatch.setattr(
         "gonet_astrometry.runner._prepare_multichannel_report_reference",
@@ -1339,8 +1389,10 @@ def test_grid_detection_only_can_write_and_reuse_stellar_identifications(
     second = run_cli_workflow(output_path=tmp_path / "second-ident.pdf", **kwargs)
     assert second.reused_detection_product is True
     assert second.reused_stellar_identification_product is True
+    assert second.reused_stellar_camera_calibration_product is True
     assert detection_calls == [1]
     assert matcher_calls == [1]
+    assert calibrator_calls == [1]
 
 
 def test_grid_hybrid_tracking_groups_catalog_labels_and_tracks_only_unmatched(

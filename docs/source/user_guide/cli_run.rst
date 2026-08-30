@@ -334,6 +334,59 @@ For catalog tracks plus discovery/fallback tracking on unmatched detections::
        --output-dir gonet_astrometry_output
 
 
+Direct stellar camera calibration
+---------------------------------
+
+Once catalog identification is reliable, ``--fit-stellar-calibration`` fits the
+production camera geometry directly from stars. The option implies the catalog
+identification stage when needed. The Grid calibration is used only to bootstrap
+the initial labels; it is not used as a predictor, residual baseline, or fitted
+coordinate system in the final camera model.
+
+The fitted intrinsic model is a radial cubic (``poly3``) with optical center
+``(cx, cy)`` and two radial coefficients, jointly fitted with one rigid
+camera-to-ENU attitude. Before the final fit, the runner rematches the V<=4.5
+catalog directly against raw detections using the stellar model itself. This
+removes inherited Grid-association errors.
+
+Production defaults reflect the empirical Adler validation:
+
+* bootstrap stellar matches: geometric altitude >=25 deg, primary assignments,
+  <=15 px Grid-assisted residual, at least five observations per star;
+* grouped-star seed audit: temporarily reject seed stars with P90 >20 arcmin;
+* direct rematching: 8 px initial gate, then 5 px;
+* final calibration sample: Sun <= -18 deg and geometric stellar altitude
+  >=30 deg;
+* catalog depth: V<=4.5.
+
+The result is cached as ``stellar_camera_calibration.npz``. Compatible products
+are reused automatically; use ``--overwrite-stellar-calibration`` to rerun only
+this stage. The artifact records grouped-star held-out residuals and the maximum
+camera angular radius represented by the final calibration sample. Its public
+projection/inverse methods reject extrapolation beyond that range unless the
+caller opts in explicitly.
+
+For calibration-only work, the tracking chain may be skipped::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --grid-calibration /path/to/grid_calibration.npz \
+       --field-mask /path/to/field_mask.npz \
+       --field-mask-keep-margin-px 32 \
+       --fit-stellar-calibration \
+       --detection-only \
+       --output-dir gonet_astrometry_output
+
+A successful run writes or reuses ``detections.npz``,
+``stellar_identifications.npz``, ``bright_star_catalog.npz``, and finally
+``stellar_camera_calibration.npz``. The last artifact contains no Grid geometry;
+the bootstrap identification product remains only in provenance.
+
+See :doc:`../concepts/stellar_camera_calibration` for the model-sweep results,
+reasoning behind the Grid-to-stars transition, and measured observational error
+floor.
+
+
 Absolute camera orientation
 ---------------------------
 

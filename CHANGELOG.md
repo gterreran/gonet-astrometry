@@ -19,6 +19,15 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Grid-independent direct stellar camera calibration with a compact radial
+  ``poly3`` intrinsic model, one camera-to-ENU attitude, conservative
+  Grid-assisted seed auditing, direct catalog rematching, grouped-star
+  cross-validation, dark/high-altitude calibration cuts, a pickle-free
+  ``stellar_camera_calibration.npz`` artifact, and CLI cache controls.
+- A dedicated stellar-camera-calibration design document recording the empirical
+  model sweep, the reason the Grid is retained only as a bootstrap, direct
+  rematching results, and the measured twilight/altitude observational error
+  floor.
 - Catalog-first and hybrid Grid-assisted tracking modes. Catalog mode constructs
   stellar tracks directly from per-frame star identities, while hybrid mode
   reserves those matched detections and runs the existing spherical tracker only

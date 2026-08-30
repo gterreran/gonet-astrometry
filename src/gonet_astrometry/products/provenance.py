@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from gonet_astrometry.calibration.stellar_camera import StellarCameraCalibrationConfig
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.solving.orientation import OrientationFitConfig
@@ -44,6 +45,9 @@ STELLAR_IDENTIFICATION_PIPELINE_REVISION = 2
 
 HYBRID_FALLBACK_TRACKING_PIPELINE_REVISION = 1
 """Manual cache revision for hybrid unmatched-detection tracking semantics."""
+
+STELLAR_CAMERA_CALIBRATION_PIPELINE_REVISION = 1
+"""Manual cache revision for direct stellar camera-calibration semantics."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +241,26 @@ def stellar_tracking_product_id(
         "temporal_tracking_product_id": temporal_tracking_id,
         "merge_config": asdict(merge_config),
         "sidereal_config": asdict(sidereal_config),
+    }
+    return _digest(payload)
+
+
+def stellar_camera_calibration_product_id(
+    detection_id: str,
+    bootstrap_identification_id: str,
+    catalog_path: Path,
+    config: StellarCameraCalibrationConfig,
+) -> str:
+    """Return the semantic identity of a direct stellar camera calibration."""
+    catalog = fingerprint_inputs((catalog_path,))[0]
+    payload = {
+        "kind": "stellar-camera-calibration",
+        "schema_version": 1,
+        "pipeline_revision": STELLAR_CAMERA_CALIBRATION_PIPELINE_REVISION,
+        "detection_product_id": detection_id,
+        "bootstrap_identification_product_id": bootstrap_identification_id,
+        "catalog": catalog.as_mapping(),
+        "fit_config": asdict(config),
     }
     return _digest(payload)
 

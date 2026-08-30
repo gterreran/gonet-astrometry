@@ -9,6 +9,7 @@ from pathlib import Path
 
 from gonet_astrometry import __version__
 from gonet_astrometry.adapters.gonet_wizard import GONET_CHANNELS
+from gonet_astrometry.calibration.stellar_camera import StellarCameraCalibrationConfig
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.detection.registry import DETECTOR_SPECS
@@ -27,6 +28,7 @@ _STELLAR_MERGE_DEFAULTS = StellarTrackMergeConfig()
 _SIDEREAL_DEFAULTS = SiderealFitConfig()
 _ORIENTATION_DEFAULTS = OrientationFitConfig()
 _STELLAR_IDENTIFICATION_DEFAULTS = StellarIdentificationConfig()
+_STELLAR_CAMERA_DEFAULTS = StellarCameraCalibrationConfig()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -235,6 +237,24 @@ def build_parser() -> argparse.ArgumentParser:
             "detections and other upstream products."
         ),
     )
+    run.add_argument(
+        "--fit-stellar-calibration",
+        action="store_true",
+        help=(
+            "Fit a Grid-independent direct stellar camera calibration. Existing "
+            "Grid-assisted identifications are used only to bootstrap the first "
+            "stellar correspondences; the final geometry is fitted directly from "
+            "catalog sky directions and raw sensor detections."
+        ),
+    )
+    run.add_argument(
+        "--overwrite-stellar-calibration",
+        action="store_true",
+        help=(
+            "Recompute only the direct stellar camera calibration while retaining "
+            "compatible detections and bootstrap stellar identifications."
+        ),
+    )
     _add_detection_arguments(run)
     _add_tracking_arguments(run)
     _add_multichannel_arguments(run)
@@ -243,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_sidereal_arguments(run)
     _add_orientation_arguments(run)
     _add_stellar_identification_arguments(run)
+    _add_stellar_camera_calibration_arguments(run)
     return parser
 
 
@@ -727,6 +748,102 @@ def _stellar_identification_config(
     )
 
 
+def _add_stellar_camera_calibration_arguments(
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Add direct stellar-camera calibration settings to ``parser``."""
+    defaults = _STELLAR_CAMERA_DEFAULTS
+    parser.add_argument(
+        "--stellar-calibration-limiting-magnitude",
+        type=float,
+        default=defaults.limiting_magnitude,
+    )
+    parser.add_argument(
+        "--stellar-calibration-seed-min-altitude-deg",
+        type=float,
+        default=defaults.seed_min_altitude_deg,
+    )
+    parser.add_argument(
+        "--stellar-calibration-min-altitude-deg",
+        type=float,
+        default=defaults.fit_min_altitude_deg,
+    )
+    parser.add_argument(
+        "--stellar-calibration-max-sun-altitude-deg",
+        type=float,
+        default=defaults.max_solar_altitude_deg,
+    )
+    parser.add_argument(
+        "--stellar-calibration-max-seed-residual-px",
+        type=float,
+        default=defaults.max_seed_identification_residual_px,
+    )
+    parser.add_argument(
+        "--stellar-calibration-min-observations-per-star",
+        type=int,
+        default=defaults.min_observations_per_star,
+    )
+    parser.add_argument(
+        "--stellar-calibration-seed-p90-arcmin",
+        type=float,
+        default=defaults.trusted_seed_p90_arcmin,
+    )
+    parser.add_argument(
+        "--stellar-calibration-initial-match-radius-px",
+        type=float,
+        default=defaults.initial_match_radius_px,
+    )
+    parser.add_argument(
+        "--stellar-calibration-final-match-radius-px",
+        type=float,
+        default=defaults.final_match_radius_px,
+    )
+    parser.add_argument(
+        "--stellar-calibration-max-refit-residual-px",
+        type=float,
+        default=defaults.max_refit_residual_px,
+    )
+    parser.add_argument(
+        "--stellar-calibration-refinement-iterations",
+        type=int,
+        default=defaults.refinement_iterations,
+    )
+    parser.add_argument(
+        "--stellar-calibration-star-fold-count",
+        type=int,
+        default=defaults.star_fold_count,
+    )
+
+
+def _stellar_camera_calibration_config(
+    arguments: argparse.Namespace,
+) -> StellarCameraCalibrationConfig:
+    """Construct direct stellar-camera calibration settings."""
+    defaults = _STELLAR_CAMERA_DEFAULTS
+    return StellarCameraCalibrationConfig(
+        limiting_magnitude=arguments.stellar_calibration_limiting_magnitude,
+        seed_min_altitude_deg=(arguments.stellar_calibration_seed_min_altitude_deg),
+        fit_min_altitude_deg=arguments.stellar_calibration_min_altitude_deg,
+        max_solar_altitude_deg=(arguments.stellar_calibration_max_sun_altitude_deg),
+        max_seed_identification_residual_px=(
+            arguments.stellar_calibration_max_seed_residual_px
+        ),
+        min_observations_per_star=(
+            arguments.stellar_calibration_min_observations_per_star
+        ),
+        trusted_seed_p90_arcmin=arguments.stellar_calibration_seed_p90_arcmin,
+        initial_match_radius_px=(arguments.stellar_calibration_initial_match_radius_px),
+        final_match_radius_px=(arguments.stellar_calibration_final_match_radius_px),
+        max_refit_residual_px=(arguments.stellar_calibration_max_refit_residual_px),
+        refinement_iterations=(arguments.stellar_calibration_refinement_iterations),
+        star_fold_count=arguments.stellar_calibration_star_fold_count,
+        random_seed=defaults.random_seed,
+        robust_scale_px=defaults.robust_scale_px,
+        max_nfev=defaults.max_nfev,
+        balance_stars=defaults.balance_stars,
+    )
+
+
 def _add_orientation_arguments(parser: argparse.ArgumentParser) -> None:
     """Add absolute-orientation fitting parameters to ``parser``."""
     parser.add_argument(
@@ -983,6 +1100,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             identify_stars=arguments.identify_stars,
             stellar_identification_config=_stellar_identification_config(arguments),
             overwrite_identifications=arguments.overwrite_identifications,
+            fit_stellar_calibration=arguments.fit_stellar_calibration,
+            stellar_calibration_config=_stellar_camera_calibration_config(arguments),
+            overwrite_stellar_calibration=(arguments.overwrite_stellar_calibration),
         )
         detection_state = "cached" if summary.reused_detection_product else "computed"
         tracking_state = "cached" if summary.reused_tracking_product else "computed"
@@ -1005,6 +1125,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else "computed"
                 )
                 product_parts.append(f"identifications {identification_state}")
+            if summary.stellar_camera_calibration_product_path is not None:
+                calibration_state = (
+                    "cached"
+                    if summary.reused_stellar_camera_calibration_product
+                    else "computed"
+                )
+                product_parts.append(f"stellar-calibration {calibration_state}")
             if summary.fallback_tracking_product_path is not None:
                 fallback_state = (
                     "cached" if summary.reused_fallback_tracking_product else "computed"

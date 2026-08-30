@@ -34,6 +34,12 @@ Absolute-orientation products
 .. automodule:: gonet_astrometry.products.orientation
    :members:
 
+Direct stellar camera-calibration products
+-------------------------------------------
+
+.. automodule:: gonet_astrometry.products.stellar_camera_calibration
+   :members:
+
 Product errors
 --------------
 

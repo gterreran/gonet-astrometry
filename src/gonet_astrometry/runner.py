@@ -25,7 +25,14 @@ from gonet_astrometry.adapters.gonet_wizard import (
     load_gonet_metadata,
 )
 from gonet_astrometry.adapters.grid_calibration import load_grid_calibration
-from gonet_astrometry.catalogs import load_or_fetch_bright_star_catalog
+from gonet_astrometry.calibration.stellar_camera import (
+    StellarCameraCalibrationConfig,
+    StellarCameraCalibrator,
+)
+from gonet_astrometry.catalogs import (
+    BrightStarCatalog,
+    load_or_fetch_bright_star_catalog,
+)
 from gonet_astrometry.detection.base import SourceDetector
 from gonet_astrometry.detection.config import DetectionConfig
 from gonet_astrometry.detection.diagnostics import enrich_detection_catalog
@@ -50,6 +57,7 @@ from gonet_astrometry.products import (
     ProductError,
     ProductStore,
     SiderealProduct,
+    StellarCameraCalibrationProduct,
     StellarIdentificationProduct,
     StellarTrackingProduct,
     TemporalTrackingProduct,
@@ -59,6 +67,7 @@ from gonet_astrometry.products import (
     load_detection_product,
     load_orientation_product,
     load_sidereal_product,
+    load_stellar_camera_calibration_product,
     load_stellar_identification_product,
     load_stellar_tracking_product,
     load_temporal_tracking_product,
@@ -68,12 +77,14 @@ from gonet_astrometry.products import (
     save_detection_product,
     save_orientation_product,
     save_sidereal_product,
+    save_stellar_camera_calibration_product,
     save_stellar_identification_product,
     save_stellar_tracking_product,
     save_temporal_tracking_product,
     save_tracking_product,
     sidereal_product_id,
     spherical_tracking_product_id,
+    stellar_camera_calibration_product_id,
     stellar_identification_product_id,
     stellar_tracking_product_id,
     tracking_product_id,
@@ -274,6 +285,7 @@ class RunSummary:
     temporal_tracking_product_path: Path | None = None
     stellar_tracking_product_path: Path | None = None
     stellar_identification_product_path: Path | None = None
+    stellar_camera_calibration_product_path: Path | None = None
     sidereal_product_path: Path | None = None
     orientation_product_path: Path | None = None
     reused_detection_product: bool = False
@@ -281,6 +293,7 @@ class RunSummary:
     reused_temporal_tracking_product: bool = False
     reused_stellar_tracking_product: bool = False
     reused_stellar_identification_product: bool = False
+    reused_stellar_camera_calibration_product: bool = False
     reused_sidereal_product: bool = False
     reused_orientation_product: bool = False
     tracking_mode: TrackingMode = "legacy"
@@ -879,6 +892,9 @@ def _run_grid_cli_workflow(
     identify_stars: bool,
     stellar_identification_config: StellarIdentificationConfig | None,
     overwrite_identifications: bool,
+    fit_stellar_calibration: bool,
+    stellar_calibration_config: StellarCameraCalibrationConfig | None,
+    overwrite_stellar_calibration: bool,
     metadata_loader: MetadataLoader,
 ) -> RunSummary:
     """Run the Grid-assisted multichannel/spherical stellar pipeline."""
@@ -1039,10 +1055,13 @@ def _run_grid_cli_workflow(
     identification_product: StellarIdentificationProduct | None = None
     stellar_identification_product_path: Path | None = None
     reused_identification = False
-    use_catalog_identification = identify_stars or tracking_mode in {
-        "catalog",
-        "hybrid",
-    }
+    bright_catalog: BrightStarCatalog | None = None
+    cache_path: Path | None = None
+    use_catalog_identification = (
+        identify_stars
+        or fit_stellar_calibration
+        or tracking_mode in {"catalog", "hybrid"}
+    )
     if use_catalog_identification:
         identification_config = (
             stellar_identification_config or StellarIdentificationConfig()
@@ -1160,6 +1179,101 @@ def _run_grid_cli_workflow(
             identification_result = identification_product.result
         stellar_identification_product_path = (
             store.stellar_identifications_path.resolve()
+        )
+
+    stellar_camera_calibration_product_path: Path | None = None
+    reused_stellar_camera_calibration = False
+    if fit_stellar_calibration:
+        if identification_product is None or identification_result is None:
+            raise RuntimeError(
+                "Direct stellar calibration requires bootstrap stellar identifications"
+            )
+        if bright_catalog is None or cache_path is None:
+            raise RuntimeError("Direct stellar calibration requires a star catalog")
+        calibration_config = (
+            stellar_calibration_config or StellarCameraCalibrationConfig()
+        )
+        expected_stellar_calibration_id = stellar_camera_calibration_product_id(
+            detection_product.product_id,
+            identification_product.product_id,
+            cache_path,
+            calibration_config,
+        )
+        stellar_calibration_product: StellarCameraCalibrationProduct | None = None
+        if (
+            reused_detection
+            and reused_identification
+            and store.stellar_camera_calibration_path.exists()
+            and not overwrite_products
+            and not overwrite_identifications
+            and not overwrite_stellar_calibration
+        ):
+            try:
+                stellar_calibration_product = load_stellar_camera_calibration_product(
+                    store.stellar_camera_calibration_path,
+                    expected_product_id=expected_stellar_calibration_id,
+                    expected_detection_product_id=detection_product.product_id,
+                    expected_bootstrap_identification_product_id=(
+                        identification_product.product_id
+                    ),
+                )
+                reused_stellar_camera_calibration = True
+                fit = stellar_calibration_product.fit
+                logger.info(
+                    "Reusing stellar camera calibration %s | optical axis "
+                    "az=%.3f deg alt=%.3f deg | grouped-star CV median/P90 "
+                    "%.3f/%.3f arcmin",
+                    store.stellar_camera_calibration_path,
+                    fit.calibration.optical_axis_azimuth_deg,
+                    fit.calibration.optical_axis_altitude_deg,
+                    fit.cv_median_arcmin,
+                    fit.cv_p90_arcmin,
+                )
+            except ProductError as exc:
+                logger.warning(
+                    "Ignoring incompatible stellar camera calibration %s: %s",
+                    store.stellar_camera_calibration_path,
+                    exc,
+                )
+        if stellar_calibration_product is None:
+            calibration_fit = StellarCameraCalibrator(calibration_config).fit(
+                detection_product.sequence,
+                identification_result,
+                bright_catalog.stars,
+                field_mask=detection_product.field_mask,
+                field_mask_keep_margin_px=(detection_product.field_mask_keep_margin_px),
+                show_progress=True,
+            )
+            stellar_calibration_product = StellarCameraCalibrationProduct(
+                product_id=expected_stellar_calibration_id,
+                detection_product_id=detection_product.product_id,
+                bootstrap_identification_product_id=identification_product.product_id,
+                catalog_path=cache_path,
+                config=calibration_config,
+                fit=calibration_fit,
+            )
+            written_calibration = save_stellar_camera_calibration_product(
+                store.stellar_camera_calibration_path,
+                stellar_calibration_product,
+            )
+            logger.info(
+                "Wrote stellar camera calibration %s | %d direct matches / %d "
+                "catalog stars | fit sample %d measurements / %d stars | "
+                "optical axis az=%.3f deg alt=%.3f deg | grouped-star CV "
+                "median/P90 %.3f/%.3f arcmin | P90 %.3f px",
+                written_calibration,
+                calibration_fit.direct_match_count,
+                calibration_fit.direct_star_count,
+                calibration_fit.calibration_measurement_count,
+                calibration_fit.calibration_star_count,
+                calibration_fit.calibration.optical_axis_azimuth_deg,
+                calibration_fit.calibration.optical_axis_altitude_deg,
+                calibration_fit.cv_median_arcmin,
+                calibration_fit.cv_p90_arcmin,
+                calibration_fit.cv_p90_px,
+            )
+        stellar_camera_calibration_product_path = (
+            store.stellar_camera_calibration_path.resolve()
         )
 
     result = ImagePlaneTrackingResult(detection_product.sequence, ())
@@ -1665,6 +1779,9 @@ def _run_grid_cli_workflow(
         temporal_tracking_product_path=temporal_tracking_product_path,
         stellar_tracking_product_path=stellar_tracking_product_path,
         stellar_identification_product_path=stellar_identification_product_path,
+        stellar_camera_calibration_product_path=(
+            stellar_camera_calibration_product_path
+        ),
         sidereal_product_path=sidereal_product_path,
         orientation_product_path=orientation_product_path,
         reused_detection_product=reused_detection,
@@ -1676,6 +1793,7 @@ def _run_grid_cli_workflow(
         reused_temporal_tracking_product=reused_temporal,
         reused_stellar_tracking_product=reused_stellar,
         reused_stellar_identification_product=reused_identification,
+        reused_stellar_camera_calibration_product=(reused_stellar_camera_calibration),
         reused_sidereal_product=reused_sidereal,
         reused_orientation_product=reused_orientation,
         tracking_mode=tracking_mode,
@@ -1715,6 +1833,9 @@ def run_cli_workflow(
     identify_stars: bool = False,
     stellar_identification_config: StellarIdentificationConfig | None = None,
     overwrite_identifications: bool = False,
+    fit_stellar_calibration: bool = False,
+    stellar_calibration_config: StellarCameraCalibrationConfig | None = None,
+    overwrite_stellar_calibration: bool = False,
     metadata_loader: MetadataLoader = load_gonet_metadata,
 ) -> RunSummary:
     """Discover inputs, reuse compatible products, and write the PDF report.
@@ -1760,6 +1881,11 @@ def run_cli_workflow(
         raise ValueError("--field-mask requires --grid-calibration")
     if identify_stars and grid_calibration_path is None:
         raise ValueError("--identify-stars requires --grid-calibration")
+    if fit_stellar_calibration and grid_calibration_path is None:
+        raise ValueError(
+            "Initial stellar-camera calibration currently requires "
+            "--grid-calibration to bootstrap stellar identities"
+        )
     if detection_workers != 1 and grid_calibration_path is None:
         raise ValueError(
             "--workers greater than 1 currently requires --grid-calibration"
@@ -1794,6 +1920,9 @@ def run_cli_workflow(
             identify_stars=identify_stars,
             stellar_identification_config=stellar_identification_config,
             overwrite_identifications=overwrite_identifications,
+            fit_stellar_calibration=fit_stellar_calibration,
+            stellar_calibration_config=stellar_calibration_config,
+            overwrite_stellar_calibration=overwrite_stellar_calibration,
             metadata_loader=metadata_loader,
         )
 

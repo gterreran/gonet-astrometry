@@ -12,6 +12,7 @@ The package-level modules are grouped below by responsibility.
    adapters
    detection
    tracking
+   calibration
    solving
    products
    catalogs

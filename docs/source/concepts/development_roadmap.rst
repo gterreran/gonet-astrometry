@@ -37,10 +37,16 @@ Milestone 4: absolute camera orientation
 * recover and validate the complete Grid-to-local-horizon rotation matrix;
 * generate catalog-match and local-direction diagnostics.
 
-Milestone 5: joint nightly calibration
----------------------------------------
+Milestone 5: direct stellar camera calibration
+----------------------------------------------
 
-* fit all matched frames with robust losses;
-* refine attitude and geometric calibration;
-* quantify uncertainty and parameter degeneracies;
-* export a versioned astrometric calibration with provenance.
+* use the Grid solution only to bootstrap high-confidence stellar identities;
+* rematch catalog stars directly against raw detections with the stellar model;
+* fit a compact radial ``poly3`` intrinsic camera model and 3-D attitude;
+* validate by grouped catalog-star cross-validation rather than random rows;
+* restrict the production fit to dark-time, high-altitude stellar measurements;
+* export a versioned, pickle-free stellar camera calibration with provenance.
+
+The remaining integration work is to allow an existing stellar camera
+calibration to replace the Grid bootstrap entirely for normal catalog matching
+and tracking.

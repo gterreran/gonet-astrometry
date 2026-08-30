@@ -181,6 +181,22 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "0.12",
             "--identify-stars",
             "--overwrite-identifications",
+            "--fit-stellar-calibration",
+            "--overwrite-stellar-calibration",
+            "--stellar-calibration-min-altitude-deg",
+            "32",
+            "--stellar-calibration-max-sun-altitude-deg",
+            "-20",
+            "--stellar-calibration-max-seed-residual-px",
+            "12",
+            "--stellar-calibration-min-observations-per-star",
+            "7",
+            "--stellar-calibration-final-match-radius-px",
+            "4",
+            "--stellar-calibration-max-refit-residual-px",
+            "3.5",
+            "--stellar-calibration-star-fold-count",
+            "4",
             "--identification-limiting-magnitude",
             "4.7",
             "--identification-bootstrap-limiting-magnitude",
@@ -235,6 +251,15 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.orientation_max_declination_p95_deg == 0.12
     assert arguments.identify_stars is True
     assert arguments.overwrite_identifications is True
+    assert arguments.fit_stellar_calibration is True
+    assert arguments.overwrite_stellar_calibration is True
+    assert arguments.stellar_calibration_min_altitude_deg == 32.0
+    assert arguments.stellar_calibration_max_sun_altitude_deg == -20.0
+    assert arguments.stellar_calibration_max_seed_residual_px == 12.0
+    assert arguments.stellar_calibration_min_observations_per_star == 7
+    assert arguments.stellar_calibration_final_match_radius_px == 4.0
+    assert arguments.stellar_calibration_max_refit_residual_px == 3.5
+    assert arguments.stellar_calibration_star_fold_count == 4
     assert arguments.identification_limiting_magnitude == 4.7
     assert arguments.identification_bootstrap_limiting_magnitude == 3.1
     assert arguments.identification_final_radius_px == 12.0
@@ -262,10 +287,12 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
             temporal_tracking_product_path=None,
             stellar_tracking_product_path=None,
             stellar_identification_product_path=None,
+            stellar_camera_calibration_product_path=None,
             fallback_tracking_product_path=None,
             reused_temporal_tracking_product=False,
             reused_stellar_tracking_product=False,
             reused_stellar_identification_product=False,
+            reused_stellar_camera_calibration_product=False,
             reused_fallback_tracking_product=False,
             tracking_mode="legacy",
             catalog_track_count=0,
@@ -321,6 +348,10 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["orientation_config"].min_matches == 8
     assert calls[0]["identify_stars"] is False
     assert calls[0]["overwrite_identifications"] is False
+    assert calls[0]["fit_stellar_calibration"] is False
+    assert calls[0]["overwrite_stellar_calibration"] is False
+    assert calls[0]["stellar_calibration_config"].fit_min_altitude_deg == 30.0
+    assert calls[0]["stellar_calibration_config"].max_solar_altitude_deg == -18.0
     assert calls[0]["stellar_identification_config"].limiting_magnitude == 4.5
     assert (
         calls[0]["stellar_identification_config"].bootstrap_limiting_magnitude

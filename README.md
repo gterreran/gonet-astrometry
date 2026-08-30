@@ -173,6 +173,19 @@ detections that were not claimed by catalog identification. The hybrid fallback
 tracklets are cached separately in ``fallback_temporal_tracks.npz``. Catalog and
 hybrid modes imply stellar identification automatically.
 
+The production geometric calibration can now be fitted directly from stars with
+``--fit-stellar-calibration``. Grid-assisted stellar identities are used only to
+bootstrap the first correspondences; the solver then rematches the catalog
+directly against raw full-sensor detections and fits a compact radial ``poly3``
+intrinsic model plus one camera-to-ENU attitude. The final fit defaults to
+Sun<=-18 degrees and geometric stellar altitude>=30 degrees, based on grouped-star
+validation showing measurable twilight centroid degradation but little benefit
+from a more aggressive altitude cut. The pickle-free
+``stellar_camera_calibration.npz`` artifact contains no Grid geometry and records
+its grouped-star validation statistics and calibrated angular range. The full
+model-selection evidence and rationale are documented in
+``docs/source/concepts/stellar_camera_calibration.rst``.
+
 The fitted rotation pole still leaves one exact camera-attitude twist around the
 celestial axis. Add ``--solve-orientation`` to resolve that final degree of
 freedom by matching de-rotated sidereal-consistent tracks to a cached bright-star

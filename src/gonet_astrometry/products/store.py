@@ -39,6 +39,11 @@ class ProductStore:
         return self.output_dir / "stellar_identifications.npz"
 
     @property
+    def stellar_camera_calibration_path(self) -> Path:
+        """Return the direct stellar camera-calibration product path."""
+        return self.output_dir / "stellar_camera_calibration.npz"
+
+    @property
     def fallback_temporal_tracks_path(self) -> Path:
         """Return hybrid unmatched-detection spherical tracklets."""
         return self.output_dir / "fallback_temporal_tracks.npz"

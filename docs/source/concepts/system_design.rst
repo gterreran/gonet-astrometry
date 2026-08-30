@@ -14,14 +14,20 @@ cadence or a fixed burst pattern. The physical temporal model then converts
 those tracklets to camera-frame unit rays before fitting the common celestial
 rotation.
 
-The eventual joint model will compare an observed pixel with a projected
-catalog direction transformed through:
+The production stellar geometry compares an observed raw pixel with a catalog
+direction transformed through:
 
 #. catalog celestial coordinates;
-#. apparent local coordinates at the exposure midpoint and GPS location;
-#. camera attitude relative to the local frame;
-#. lens and Grid-calibration geometry;
-#. native sensor coordinates.
+#. geometric local coordinates at the exposure midpoint and GPS location;
+#. one rigid camera-to-ENU attitude;
+#. a compact direct intrinsic camera model;
+#. native full-sensor coordinates.
+
+The Grid calibration is used only to bootstrap the first reliable stellar
+identities.  It is deliberately excluded from the final intrinsic geometry,
+because the physical Grid measurement contains both camera distortion and
+calibration-target imperfections.  See :doc:`stellar_camera_calibration` for
+the empirical model-selection evidence and production fitting policy.
 
 Architecture boundaries
 -----------------------
@@ -44,15 +50,19 @@ The initial boundaries are:
    Temporal association and common-axis estimation.
 ``catalogs``
    Local or remote catalog access.
+``calibration``
+   Direct intrinsic camera models and stellar geometric fitting.
 ``solving``
-   Matching, robust optimization, and validation.
+   Sidereal/orientation matching, robust optimization, and validation.
 ``diagnostics``
    Overlays, residual maps, and calibration reports.
 
 Modeling constraints
 --------------------
 
-The first solver should use a compact, interpretable geometric model. Flexible
-residual fields may be introduced only after correct source associations and
-basic lens geometry are demonstrated, and they must be regularized to avoid
-absorbing matching errors.
+The final camera solver uses the seven-parameter radial ``poly3`` model selected
+by grouped-star cross-validation.  Higher radial orders, affine/tangential
+terms, and generic two-dimensional polynomials were retained as research
+comparators but did not improve held-out performance enough to justify their
+complexity.  Flexible residual fields should not be added unless independent
+data demonstrate spatial structure that the compact model cannot explain.
