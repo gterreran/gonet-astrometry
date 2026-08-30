@@ -39,6 +39,11 @@ class ProductStore:
         return self.output_dir / "stellar_identifications.npz"
 
     @property
+    def fallback_temporal_tracks_path(self) -> Path:
+        """Return hybrid unmatched-detection spherical tracklets."""
+        return self.output_dir / "fallback_temporal_tracks.npz"
+
+    @property
     def stellar_tracks_path(self) -> Path:
         """Return the merged physical stellar-track product path."""
         return self.output_dir / "stellar_tracks.npz"

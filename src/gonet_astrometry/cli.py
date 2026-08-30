@@ -152,6 +152,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument(
+        "--tracking-mode",
+        choices=("legacy", "catalog", "hybrid"),
+        default="legacy",
+        help=(
+            "Grid-assisted association strategy. 'legacy' preserves spherical "
+            "temporal tracking and sidereal fragment merging; 'catalog' groups "
+            "detections directly by catalog star identity; 'hybrid' uses catalog "
+            "tracks first and runs the spherical tracker only on unmatched "
+            "detections (default: %(default)s)."
+        ),
+    )
+    run.add_argument(
         "--field-mask",
         type=Path,
         default=None,
@@ -165,10 +177,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--detection-only",
         action="store_true",
         help=(
-            "Skip spherical temporal tracking, stellar merging, sidereal fitting, "
-            "and absolute orientation. If --identify-stars is supplied, catalog "
-            "identification still runs after detection. Grid-assisted runs may "
-            "therefore operate on a single image."
+            "Skip tracking, stellar merging, sidereal fitting, and absolute "
+            "orientation. Catalog identification still runs when --identify-stars "
+            "is supplied or implied by a catalog/hybrid tracking mode. Grid-assisted "
+            "runs may therefore operate on a single image."
         ),
     )
     run.add_argument(
@@ -210,9 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Fit one sequence-wide Grid-to-horizon attitude and identify visible "
-            "Bright Star Catalogue stars independently in every frame. This "
-            "writes stellar_identifications.npz without changing the current "
-            "legacy/spherical tracking path."
+            "Bright Star Catalogue stars independently in every frame. Catalog "
+            "identification is implied automatically by --tracking-mode catalog "
+            "and --tracking-mode hybrid."
         ),
     )
     run.add_argument(
@@ -949,6 +961,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             algorithm=arguments.algorithm,
             detection_config=_detection_config(arguments),
             tracking_config=_tracking_config(arguments),
+            tracking_mode=arguments.tracking_mode,
             channel=arguments.channel,
             reference_image_path=arguments.reference_image,
             output_path=output_path,
@@ -992,6 +1005,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else "computed"
                 )
                 product_parts.append(f"identifications {identification_state}")
+            if summary.fallback_tracking_product_path is not None:
+                fallback_state = (
+                    "cached" if summary.reused_fallback_tracking_product else "computed"
+                )
+                product_parts.append(f"fallback {fallback_state}")
             product_note = " | ".join(product_parts)
         else:
             product_note = f"detections {detection_state} | tracks {tracking_state}"
@@ -1005,9 +1023,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "cached" if summary.reused_orientation_product else "computed"
             )
             solution_note += f" | orientation {orientation_state}"
+        track_breakdown = ""
+        if summary.tracking_mode != "legacy":
+            track_breakdown = (
+                f" ({summary.catalog_track_count} catalog, "
+                f"{summary.fallback_track_count} fallback)"
+            )
         print(
             f"Wrote {summary.output_path} | {summary.file_count} images | "
-            f"{summary.detection_count} detections | {summary.track_count} tracks | "
+            f"{summary.detection_count} detections | {summary.track_count} tracks"
+            f"{track_breakdown} | "
             f"{summary.assigned_detection_count} assigned | "
             f"{summary.unassigned_detection_count} unassigned | "
             f"{summary.skipped_file_count} skipped before detection | "

@@ -40,6 +40,7 @@ _TRACK_STYLES: dict[TrackClass, tuple[str, str, str]] = {
     "low-motion": ("Low-motion tracks", "#94a3b8", "D"),
     "poor-fit": ("Poor-fit tracks", "#fb7185", "x"),
 }
+_CATALOG_TRACK_STYLE = ("Catalog tracks", "#22c55e", "o")
 
 _SIDEREAL_TRACK_STYLES: dict[str, tuple[str, str]] = {
     "sidereal-consistent": ("Sidereal-consistent", "#22c55e"),
@@ -656,13 +657,34 @@ def _rotate_vector(
 
 
 def _draw_tracks(axis: object, artifacts: TrackingRunArtifacts) -> None:
-    """Draw complete image-plane histories grouped by track class."""
+    """Draw complete image-plane histories, distinguishing catalog labels."""
     result = artifacts.tracking_result
+    catalog_tracks = [
+        track for track in result.tracks if track.catalog_identifier is not None
+    ]
+    if catalog_tracks:
+        label, color, marker = _CATALOG_TRACK_STYLE
+        first = True
+        for track in catalog_tracks:
+            resolved = result.resolve(track)
+            axis.plot(  # type: ignore[attr-defined]
+                [point.detection.x / 2.0 for point in resolved],
+                [point.detection.y / 2.0 for point in resolved],
+                color=color,
+                marker=marker,
+                markersize=2.5,
+                linewidth=0.8,
+                alpha=0.9,
+                label=f"{label} ({len(catalog_tracks)})" if first else None,
+            )
+            first = False
+
     grouped: dict[TrackClass, list[object]] = {
         track_class: [] for track_class in _TRACK_STYLES
     }
     for track in result.tracks:
-        grouped[track.diagnostic_class].append(track)
+        if track.catalog_identifier is None:
+            grouped[track.diagnostic_class].append(track)
 
     for track_class, tracks in grouped.items():
         if not tracks:
@@ -774,6 +796,7 @@ def _parameter_summary(
         )
         return (
             f"images={len(artifacts.files)}  "
+            f"tracking={artifacts.tracking_mode}  "
             f"threshold={detection.threshold_sigma:g}sigma  "
             f"edge={edge_setting}  "
             f"edge_keep={multichannel.field_edge_keep_margin_px:g}px  "

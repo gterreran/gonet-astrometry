@@ -17,6 +17,7 @@ from gonet_astrometry.products.orientation import (
 )
 from gonet_astrometry.products.provenance import (
     DETECTION_PIPELINE_REVISION,
+    HYBRID_FALLBACK_TRACKING_PIPELINE_REVISION,
     MULTICHANNEL_DETECTION_PIPELINE_REVISION,
     ORIENTATION_PIPELINE_REVISION,
     SIDEREAL_PIPELINE_REVISION,
@@ -25,6 +26,7 @@ from gonet_astrometry.products.provenance import (
     STELLAR_TRACKING_PIPELINE_REVISION,
     TRACKING_PIPELINE_REVISION,
     detection_product_id,
+    hybrid_fallback_tracking_product_id,
     multichannel_detection_product_id,
     orientation_product_id,
     sidereal_product_id,
@@ -60,6 +62,7 @@ from gonet_astrometry.products.tracks import (
 
 __all__ = [
     "DETECTION_PIPELINE_REVISION",
+    "HYBRID_FALLBACK_TRACKING_PIPELINE_REVISION",
     "DetectionProduct",
     "ORIENTATION_PIPELINE_REVISION",
     "MULTICHANNEL_DETECTION_PIPELINE_REVISION",
@@ -79,6 +82,7 @@ __all__ = [
     "TRACKING_PIPELINE_REVISION",
     "TrackingProduct",
     "detection_product_id",
+    "hybrid_fallback_tracking_product_id",
     "load_detection_product",
     "load_orientation_product",
     "load_sidereal_product",

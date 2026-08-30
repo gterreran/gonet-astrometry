@@ -19,6 +19,10 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Catalog-first and hybrid Grid-assisted tracking modes. Catalog mode constructs
+  stellar tracks directly from per-frame star identities, while hybrid mode
+  reserves those matched detections and runs the existing spherical tracker only
+  on unmatched candidates, with separately cached fallback tracklets.
 - CLI ``--reference-image`` selection for choosing any retained epoch as the PDF background without invalidating or recomputing scientific products.
 - Catalog-assisted absolute camera orientation that resolves the final twist
   about the fitted celestial pole, caches the Bright Star Catalogue in a

@@ -55,6 +55,7 @@ from gonet_astrometry.products import (
     TemporalTrackingProduct,
     TrackingProduct,
     detection_product_id,
+    hybrid_fallback_tracking_product_id,
     load_detection_product,
     load_orientation_product,
     load_sidereal_product,
@@ -106,6 +107,11 @@ from gonet_astrometry.tracking.location_filter import (
     LocatedInput,
     LocationGroupSelection,
     select_dominant_location_group,
+)
+from gonet_astrometry.tracking.modes import (
+    TrackingMode,
+    combine_catalog_and_fallback_tracks,
+    unmatched_detection_sequence,
 )
 from gonet_astrometry.tracking.sequence import (
     DetectionEpoch,
@@ -238,6 +244,7 @@ class TrackingRunArtifacts:
     reference_catalog: DetectionCatalog
     reference_prepared: PreparedDetectionImage
     grid_calibration: GridCalibration | None = None
+    tracking_mode: TrackingMode = "legacy"
     sidereal_solution: SiderealRotationSolution | None = None
     sidereal_fit_config: SiderealFitConfig | None = None
     multichannel_detection_config: MultiChannelSEPConfig | None = None
@@ -276,6 +283,11 @@ class RunSummary:
     reused_stellar_identification_product: bool = False
     reused_sidereal_product: bool = False
     reused_orientation_product: bool = False
+    tracking_mode: TrackingMode = "legacy"
+    catalog_track_count: int = 0
+    fallback_track_count: int = 0
+    fallback_tracking_product_path: Path | None = None
+    reused_fallback_tracking_product: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,6 +857,7 @@ def _run_grid_cli_workflow(
     algorithm: str,
     detection_config: DetectionConfig,
     tracking_config: TrackingConfig,
+    tracking_mode: TrackingMode,
     channel: GONetChannel,
     output_path: Path,
     reference_image_path: Path | None,
@@ -875,6 +888,11 @@ def _run_grid_cli_workflow(
         )
     if detection_only and solve_orientation:
         raise ValueError("--solve-orientation cannot be used with --detection-only")
+    if tracking_mode != "legacy" and solve_orientation:
+        raise ValueError(
+            "--solve-orientation currently requires --tracking-mode legacy; "
+            "catalog identification already solves the absolute Grid-to-ENU attitude"
+        )
 
     grid_path = Path(grid_calibration_path).expanduser().resolve()
     grid_calibration = load_grid_calibration(grid_path)
@@ -1018,9 +1036,14 @@ def _run_grid_cli_workflow(
         logger.info("Using report reference image %s", report_reference_path)
 
     identification_result: StellarIdentificationResult | None = None
+    identification_product: StellarIdentificationProduct | None = None
     stellar_identification_product_path: Path | None = None
     reused_identification = False
-    if identify_stars:
+    use_catalog_identification = identify_stars or tracking_mode in {
+        "catalog",
+        "hybrid",
+    }
+    if use_catalog_identification:
         identification_config = (
             stellar_identification_config or StellarIdentificationConfig()
         )
@@ -1045,7 +1068,6 @@ def _run_grid_cli_workflow(
             cache_path,
             identification_config,
         )
-        identification_product: StellarIdentificationProduct | None = None
         if (
             reused_detection
             and store.stellar_identifications_path.exists()
@@ -1157,11 +1179,129 @@ def _run_grid_cli_workflow(
     reused_stellar = False
     reused_sidereal = False
     reused_orientation = False
+    reused_fallback = False
+    catalog_track_count = 0
+    fallback_track_count = 0
+    fallback_tracking_product_path: Path | None = None
 
     if detection_only:
         logger.info(
             "Detection-only run requested; skipping spherical tracking, stellar "
             "merging, sidereal fitting, and absolute orientation"
+        )
+    elif tracking_mode == "catalog":
+        if identification_result is None:
+            raise RuntimeError(
+                "Catalog tracking requires a stellar-identification result"
+            )
+        if identification_product is None:
+            raise RuntimeError(
+                "Catalog tracking requires a stellar-identification product"
+            )
+        result = identification_result.catalog_tracks(
+            detection_product.sequence,
+            min_track_length=identification_product.config.minimum_catalog_track_length,
+        )
+        catalog_track_count = len(result.tracks)
+        logger.info(
+            "Built %d catalog-labelled stellar tracks | %d assigned detections | "
+            "%d detections outside retained tracks",
+            catalog_track_count,
+            result.assigned_detection_count,
+            result.unassigned_detection_count,
+        )
+    elif tracking_mode == "hybrid":
+        if identification_result is None or identification_product is None:
+            raise RuntimeError(
+                "Hybrid tracking requires a stellar-identification product"
+            )
+        catalog_result = identification_result.catalog_tracks(
+            detection_product.sequence,
+            min_track_length=identification_product.config.minimum_catalog_track_length,
+        )
+        catalog_track_count = len(catalog_result.tracks)
+        unmatched_sequence = unmatched_detection_sequence(
+            detection_product.sequence,
+            identification_result,
+        )
+        fallback_result = ImagePlaneTrackingResult(unmatched_sequence, ())
+        fallback_product: TemporalTrackingProduct | None = None
+        if (
+            len(unmatched_sequence.epochs) >= spherical_config.min_track_length
+            and unmatched_sequence.total_detections > 0
+        ):
+            expected_fallback_id = hybrid_fallback_tracking_product_id(
+                detection_product.product_id,
+                identification_product.product_id,
+                grid_path,
+                spherical_config,
+            )
+            if (
+                store.fallback_temporal_tracks_path.exists()
+                and not overwrite_products
+                and not overwrite_identifications
+            ):
+                try:
+                    fallback_product = load_temporal_tracking_product(
+                        store.fallback_temporal_tracks_path,
+                        unmatched_sequence,
+                        expected_product_id=expected_fallback_id,
+                        expected_detection_product_id=detection_product.product_id,
+                    )
+                    reused_fallback = True
+                    logger.info(
+                        "Reusing hybrid fallback tracks %s | %d tracklets",
+                        store.fallback_temporal_tracks_path,
+                        len(fallback_product.result.tracks),
+                    )
+                except ProductError as exc:
+                    logger.warning(
+                        "Ignoring incompatible hybrid fallback product %s: %s",
+                        store.fallback_temporal_tracks_path,
+                        exc,
+                    )
+            if fallback_product is None:
+                fallback_result = _track_spherical_sequence(
+                    unmatched_sequence,
+                    grid_calibration,
+                    spherical_config,
+                )
+                fallback_product = TemporalTrackingProduct(
+                    product_id=expected_fallback_id,
+                    detection_product_id=detection_product.product_id,
+                    grid_calibration_path=grid_path,
+                    tracking_config=spherical_config,
+                    result=fallback_result,
+                )
+                written_fallback = save_temporal_tracking_product(
+                    store.fallback_temporal_tracks_path,
+                    fallback_product,
+                )
+                logger.info(
+                    "Wrote hybrid fallback tracks %s | %d tracklets",
+                    written_fallback,
+                    len(fallback_result.tracks),
+                )
+            else:
+                fallback_result = fallback_product.result
+            fallback_tracking_product_path = (
+                store.fallback_temporal_tracks_path.resolve()
+            )
+
+        fallback_track_count = len(fallback_result.tracks)
+        result = combine_catalog_and_fallback_tracks(
+            detection_product.sequence,
+            catalog_result,
+            fallback_result,
+        )
+        logger.info(
+            "Built hybrid tracks | %d catalog | %d fallback | %d total | "
+            "%d assigned detections | %d unassigned",
+            catalog_track_count,
+            fallback_track_count,
+            len(result.tracks),
+            result.assigned_detection_count,
+            result.unassigned_detection_count,
         )
     elif len(detection_product.sequence.epochs) < spherical_config.min_track_length:
         logger.info(
@@ -1488,6 +1628,7 @@ def _run_grid_cli_workflow(
         reference_catalog=reference_catalog,
         reference_prepared=reference_prepared,
         grid_calibration=grid_calibration,
+        tracking_mode=tracking_mode,
         sidereal_solution=sidereal_solution,
         sidereal_fit_config=sidereal_fit_config,
         multichannel_detection_config=multi_config,
@@ -1537,6 +1678,11 @@ def _run_grid_cli_workflow(
         reused_stellar_identification_product=reused_identification,
         reused_sidereal_product=reused_sidereal,
         reused_orientation_product=reused_orientation,
+        tracking_mode=tracking_mode,
+        catalog_track_count=catalog_track_count,
+        fallback_track_count=fallback_track_count,
+        fallback_tracking_product_path=fallback_tracking_product_path,
+        reused_fallback_tracking_product=reused_fallback,
     )
 
 
@@ -1549,6 +1695,7 @@ def run_cli_workflow(
     tracking_config: TrackingConfig,
     channel: GONetChannel,
     output_path: Path,
+    tracking_mode: TrackingMode = "legacy",
     reference_image_path: Path | None = None,
     output_dir: Path | None = None,
     overwrite_products: bool = False,
@@ -1593,6 +1740,10 @@ def run_cli_workflow(
         raise ValueError("The run command requires at least one candidate GONet image")
     if detection_workers < 1:
         raise ValueError("Detection workers must be at least one")
+    if tracking_mode not in {"legacy", "catalog", "hybrid"}:
+        raise ValueError(f"Unsupported tracking mode: {tracking_mode!r}")
+    if tracking_mode != "legacy" and grid_calibration_path is None:
+        raise ValueError("Catalog and hybrid tracking require --grid-calibration")
     if detection_only and grid_calibration_path is None:
         raise ValueError("--detection-only requires --grid-calibration")
     if grid_calibration_path is None and len(discovery.files) < 2:
@@ -1621,6 +1772,7 @@ def run_cli_workflow(
             algorithm=algorithm,
             detection_config=detection_config,
             tracking_config=tracking_config,
+            tracking_mode=tracking_mode,
             channel=channel,
             output_path=output_path,
             reference_image_path=reference_image_path,

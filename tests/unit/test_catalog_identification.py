@@ -9,6 +9,7 @@ from gonet_astrometry.geometry.horizon import altaz_to_enu
 from gonet_astrometry.models.detection import Detection, DetectionCatalog
 from gonet_astrometry.models.frame import ObserverLocation
 from gonet_astrometry.models.grid import GridCalibration
+from gonet_astrometry.models.track import StarTrack, TrackPoint
 from gonet_astrometry.products.stellar_identifications import (
     StellarIdentificationProduct,
     load_stellar_identification_product,
@@ -17,6 +18,11 @@ from gonet_astrometry.products.stellar_identifications import (
 from gonet_astrometry.tracking.catalog_identification import (
     CatalogSequenceMatcher,
     StellarIdentificationConfig,
+)
+from gonet_astrometry.tracking.image_plane import ImagePlaneTrackingResult
+from gonet_astrometry.tracking.modes import (
+    combine_catalog_and_fallback_tracks,
+    unmatched_detection_sequence,
 )
 from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
 
@@ -158,9 +164,63 @@ def test_catalog_sequence_matcher_recovers_attitude_and_star_labels() -> None:
     assert {track.catalog_identifier for track in tracks.tracks} == {
         star.identifier for star in stars
     }
-    short = next(track for track in tracks.tracks if track.catalog_identifier == "HR 109")
+    short = next(
+        track for track in tracks.tracks if track.catalog_identifier == "HR 109"
+    )
     assert len(short.points) == 2
 
+
+
+def test_hybrid_helpers_reserve_catalog_matches_for_catalog_tracks() -> None:
+    sequence, calibration, stars, provider, _ = _synthetic_case()
+    config = StellarIdentificationConfig(
+        bootstrap_limiting_magnitude=4.5,
+        bootstrap_rotation_step_deg=2.0,
+        bootstrap_match_radius_px=30.0,
+        refinement_radii_px=(20.0, 10.0, 5.0),
+        sequence_refinement_radius_px=5.0,
+        final_match_radius_px=2.0,
+        bright_rescue_radius_px=4.0,
+        robust_clip_floor_arcmin=1.0,
+    )
+    identifications = CatalogSequenceMatcher(config).fit_and_match(
+        sequence,
+        calibration,
+        stars,
+        catalog_ray_provider=provider,
+    )
+    catalog_tracks = identifications.catalog_tracks(sequence)
+    unmatched = unmatched_detection_sequence(sequence, identifications)
+
+    assert unmatched.total_detections == 4
+    assert all(len(epoch.catalog.detections) == 1 for epoch in unmatched.epochs)
+
+    fallback = ImagePlaneTrackingResult(
+        unmatched,
+        (
+            StarTrack(
+                identifier=0,
+                points=tuple(
+                    TrackPoint(
+                        epoch.frame_identifier,
+                        epoch.catalog.detections[0].identifier,
+                    )
+                    for epoch in unmatched.epochs
+                ),
+            ),
+        ),
+    )
+    combined = combine_catalog_and_fallback_tracks(
+        sequence,
+        catalog_tracks,
+        fallback,
+    )
+
+    assert len(combined.tracks) == 11
+    assert [track.identifier for track in combined.tracks] == list(range(11))
+    assert sum(track.catalog_identifier is not None for track in combined.tracks) == 10
+    assert combined.tracks[-1].catalog_identifier is None
+    assert combined.assigned_detection_count == sequence.total_detections
 
 def test_stellar_identification_product_round_trip(tmp_path: Path) -> None:
     sequence, calibration, stars, provider, _ = _synthetic_case()

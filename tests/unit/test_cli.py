@@ -211,6 +211,7 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.overwrite_products is True
     assert arguments.workers == 4
     assert arguments.grid_calibration == Path("camera_calibration.npz")
+    assert arguments.tracking_mode == "legacy"
     assert arguments.overwrite_solution is True
     assert arguments.footprint_threshold_fraction == 0.25
     assert arguments.use_provisional_field_mask is False
@@ -260,8 +261,15 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
             reused_tracking_product=False,
             temporal_tracking_product_path=None,
             stellar_tracking_product_path=None,
+            stellar_identification_product_path=None,
+            fallback_tracking_product_path=None,
             reused_temporal_tracking_product=False,
             reused_stellar_tracking_product=False,
+            reused_stellar_identification_product=False,
+            reused_fallback_tracking_product=False,
+            tracking_mode="legacy",
+            catalog_track_count=0,
+            fallback_track_count=0,
             sidereal_product_path=None,
             reused_sidereal_product=False,
             orientation_product_path=None,
@@ -289,6 +297,7 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["algorithm"] == "sep"
     assert calls[0]["detection_config"].threshold_sigma == 6.0
     assert calls[0]["tracking_config"].prediction_tolerance_px == 8.0
+    assert calls[0]["tracking_mode"] == "legacy"
     assert calls[0]["output_dir"] == Path("gonet_astrometry_output")
     assert calls[0]["output_path"] == Path("gonet_astrometry_output/tracking.pdf")
     assert calls[0]["reference_image_path"] is None
@@ -318,6 +327,23 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
         == 3.2
     )
     assert "300 detections" in capsys.readouterr().out
+
+
+def test_run_parser_accepts_hybrid_tracking_mode() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "run",
+            "frame.jpg",
+            "--algorithm",
+            "sep",
+            "--grid-calibration",
+            "camera_calibration.npz",
+            "--tracking-mode",
+            "hybrid",
+        ]
+    )
+
+    assert arguments.tracking_mode == "hybrid"
 
 
 def test_run_parser_accepts_detection_only_grid_mode() -> None:

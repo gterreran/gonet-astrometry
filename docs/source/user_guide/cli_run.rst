@@ -137,11 +137,14 @@ default layout is::
 
    gonet_astrometry_output/
        detections.npz
-       tracks.npz
-       sidereal_rotation.npz      # when --grid-calibration is supplied
-       stellar_identifications.npz # when --identify-stars is supplied
+       tracks.npz                  # legacy image-plane runs
+       temporal_tracks.npz         # Grid-assisted legacy spherical tracking
+       stellar_tracks.npz          # Grid-assisted legacy stellar merge
+       stellar_identifications.npz # catalog identification
+       fallback_temporal_tracks.npz # hybrid unmatched-detection fallback
+       sidereal_rotation.npz       # legacy Grid-assisted sidereal fit
        bright_star_catalog.npz     # after first catalog-assisted operation
-       absolute_orientation.npz    # when --solve-orientation is supplied
+       absolute_orientation.npz    # legacy --solve-orientation path
        tracking.pdf
 
 Use ``--output-dir`` to choose a different directory. ``--output`` may still
@@ -245,8 +248,9 @@ measurements make track fragmentation visible without assuming that the input
 images are evenly spaced in time.
 
 
-When ``--grid-calibration`` is supplied, a third page summarizes the shared
-sidereal fit. It overlays consistent/rejected/insufficient tracks, marks the
+When ``--grid-calibration`` is supplied in ``legacy`` tracking mode and a
+sidereal solution is available, a third page summarizes the shared sidereal
+fit. It overlays consistent/rejected/insufficient tracks, marks the
 fitted apparent rotation pole when it lies inside Grid coverage, plots the
 per-track de-rotated residual distribution and residual versus track duration,
 and records the Grid-frame pole vector and global RMS/median/P95 residuals.
@@ -254,11 +258,12 @@ and records the Grid-frame pole vector and global RMS/median/P95 residuals.
 Per-frame stellar identification
 --------------------------------
 
-``--identify-stars`` adds a catalog-association stage without replacing the
-current spherical/sidereal tracker.  The Bright Star Catalogue is loaded once
-from ``--catalog-cache`` (or ``<output-dir>/bright_star_catalog.npz``) and the
-same catalog records are propagated to every exposure time.  No network query
-is performed per image.
+``--identify-stars`` adds a catalog-association stage.  The Bright Star
+Catalogue is loaded once from ``--catalog-cache`` (or
+``<output-dir>/bright_star_catalog.npz``) and the same catalog records are
+propagated to every exposure time.  No network query is performed per image.
+Catalog identification is also enabled automatically by ``--tracking-mode
+catalog`` and ``--tracking-mode hybrid``.
 
 The matcher first selects a high-confidence bright subset (V<=3.2 by default)
 and performs an automatic 0--360 degree roll search under the near-zenith camera
@@ -276,13 +281,31 @@ position-dependent residuals of the Grid calibration.
 
 The result is cached as ``stellar_identifications.npz`` and includes the fitted
 Grid-to-ENU matrix, per-frame expected-star positions, catalog magnitudes, match
-residuals, and matched detection identifiers.  Catalog tracks can therefore be
-constructed simply by grouping matched detections by catalog identifier.  During
-this validation phase, the legacy/spherical temporal tracker still runs exactly
-as before; a later hybrid mode will use it only for unmatched detections or poor
-catalog frames.  Use ``--overwrite-identifications`` to recompute only this
-product.  ``--detection-only --identify-stars`` is supported when only detection
-and catalog association are desired.
+residuals, and matched detection identifiers.  Tracks for identified stars are
+constructed simply by grouping matched detections by catalog identifier.
+
+Grid-assisted tracking offers three modes:
+
+``legacy``
+   Preserve the existing spherical temporal tracker, sidereal fragment merge,
+   and downstream sidereal solution. This remains the default during validation.
+
+``catalog``
+   Build stellar tracks directly from catalog labels. Blind temporal association
+   and fragment merging are skipped for those stars.
+
+``hybrid``
+   Build the catalog-labelled tracks first, remove their detections from a copy
+   of the sequence, and run the existing spherical tracker only on the remaining
+   detections. This naturally sends poor or unmatched frames to the legacy
+   fallback without allowing a detection to belong to both paths. The fallback
+   tracklets are cached as ``fallback_temporal_tracks.npz``.
+
+Catalog and hybrid modes currently stop after association; the legacy sidereal
+merge/orientation chain remains unchanged and is selected explicitly with
+``--tracking-mode legacy``. Use ``--overwrite-identifications`` to recompute
+only the catalog association product. ``--detection-only --identify-stars`` is
+supported when only detection and catalog association are desired.
 
 Example::
 
@@ -292,6 +315,22 @@ Example::
        --field-mask /path/to/field_mask.npz \
        --identify-stars \
        --detection-only \
+       --output-dir gonet_astrometry_output
+
+For catalog-first tracking, identification is implied::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --grid-calibration /path/to/camera_calibration.npz \
+       --tracking-mode catalog \
+       --output-dir gonet_astrometry_output
+
+For catalog tracks plus discovery/fallback tracking on unmatched detections::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --grid-calibration /path/to/camera_calibration.npz \
+       --tracking-mode hybrid \
        --output-dir gonet_astrometry_output
 
 

@@ -1341,3 +1341,231 @@ def test_grid_detection_only_can_write_and_reuse_stellar_identifications(
     assert second.reused_stellar_identification_product is True
     assert detection_calls == [1]
     assert matcher_calls == [1]
+
+
+def test_grid_hybrid_tracking_groups_catalog_labels_and_tracks_only_unmatched(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from gonet_astrometry.models.grid import GridCalibration
+    from gonet_astrometry.models.track import StarTrack, TrackPoint
+    from gonet_astrometry.tracking.catalog_identification import (
+        StellarIdentification,
+        StellarIdentificationEpoch,
+        StellarIdentificationResult,
+    )
+    from gonet_astrometry.tracking.image_plane import ImagePlaneTrackingResult
+    from gonet_astrometry.tracking.sequence import DetectionEpoch, DetectionSequence
+    from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
+
+    paths = tuple((tmp_path / f"hybrid-{index}.jpg").resolve() for index in range(3))
+    for index, path in enumerate(paths):
+        path.write_bytes(b"raw" + bytes([index]))
+    grid_path = tmp_path / "camera_calibration.npz"
+    grid_path.write_bytes(b"portable grid")
+    catalog_path = tmp_path / "bright_star_catalog.npz"
+    catalog_path.write_bytes(b"catalog fingerprint")
+
+    frames = [_frame(path, index) for index, path in enumerate(paths)]
+    catalogs = tuple(
+        DetectionCatalog(
+            str(path),
+            (
+                Detection(0, 5.0 + index, 6.0, 10.0, 10.0, 0.5, 0.5),
+                Detection(1, 12.0 + index, 14.0, 8.0, 8.0, 0.5, 0.5),
+            ),
+            "sep-independent-channels",
+        )
+        for index, path in enumerate(paths)
+    )
+    sequence = DetectionSequence.from_epochs(
+        [
+            DetectionEpoch.from_frame(str(path), frame, catalog)
+            for path, frame, catalog in zip(paths, frames, catalogs, strict=True)
+        ]
+    )
+    detected = DetectionRunArtifacts(
+        files=paths,
+        algorithm="sep-independent-channels",
+        sequence=sequence,
+        reference_path=paths[0],
+        reference_catalog=catalogs[0],
+        reference_prepared=_prepared(),
+    )
+
+    class Transform:
+        def pixel_to_ray(self, x, y):
+            del y
+            rays = np.zeros(np.asarray(x).shape + (3,), dtype=float)
+            rays[..., 2] = 1.0
+            return rays
+
+    calibration = GridCalibration(
+        transform=Transform(),
+        image_shape=(20, 20),
+        coordinate_convention="test",
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_grid_calibration", lambda path: calibration
+    )
+
+    class FakeMultichannelDetector:
+        name = "sep-independent-channels"
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def prepare_report_image(self, frame):
+            del frame
+            return _prepared()
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.IndependentChannelSEPDetector",
+        FakeMultichannelDetector,
+    )
+    detection_calls: list[int] = []
+
+    def fake_detection(*args, **kwargs):
+        del args, kwargs
+        detection_calls.append(1)
+        return detected
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.execute_multichannel_detection_run",
+        fake_detection,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_or_fetch_bright_star_catalog",
+        lambda cache_path: SimpleNamespace(
+            stars=(object(),),
+            query_bright_stars=lambda epoch, limiting_magnitude: (object(),),
+        ),
+    )
+
+    identification_result = StellarIdentificationResult(
+        grid_to_enu=np.eye(3),
+        bootstrap_frame_identifier=str(paths[0]),
+        epochs=tuple(
+            StellarIdentificationEpoch(
+                frame_identifier=str(path),
+                visible_stars=(
+                    StellarIdentification(
+                        catalog_identifier="HR 1",
+                        catalog_magnitude=1.0,
+                        azimuth_deg=0.0,
+                        altitude_deg=80.0,
+                        predicted_x=5.0 + index,
+                        predicted_y=6.0,
+                        detection_identifier=0,
+                        residual_px=0.1,
+                        residual_arcmin=0.2,
+                        match_kind="primary",
+                    ),
+                ),
+            )
+            for index, path in enumerate(paths)
+        ),
+        fit_pair_count=3,
+        fit_median_residual_arcmin=0.2,
+        fit_p90_residual_arcmin=0.2,
+    )
+    matcher_calls: list[int] = []
+
+    class FakeMatcher:
+        def __init__(self, config):
+            del config
+
+        def fit_and_match(self, *args, **kwargs):
+            del args, kwargs
+            matcher_calls.append(1)
+            return identification_result
+
+    monkeypatch.setattr("gonet_astrometry.runner.CatalogSequenceMatcher", FakeMatcher)
+
+    fallback_calls: list[int] = []
+
+    def fake_fallback(unmatched_sequence, grid, config):
+        del grid, config
+        fallback_calls.append(unmatched_sequence.total_detections)
+        assert unmatched_sequence.total_detections == 3
+        assert all(
+            [detection.identifier for detection in epoch.catalog.detections] == [1]
+            for epoch in unmatched_sequence.epochs
+        )
+        return ImagePlaneTrackingResult(
+            unmatched_sequence,
+            (
+                StarTrack(
+                    identifier=0,
+                    points=tuple(
+                        TrackPoint(epoch.frame_identifier, 1)
+                        for epoch in unmatched_sequence.epochs
+                    ),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._track_spherical_sequence",
+        fake_fallback,
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.load_gonet_file_raw",
+        lambda path, parse_metadata=False: object(),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.get_raw_channel",
+        lambda raw, channel: np.zeros((10, 10), dtype=float),
+    )
+    monkeypatch.setattr(
+        "gonet_astrometry.runner.write_tracking_report_pdf",
+        lambda path, **kwargs: path.resolve(),
+    )
+
+    product_dir = tmp_path / "products"
+    kwargs = dict(
+        inputs=[tmp_path],
+        recursive=False,
+        algorithm="sep",
+        detection_config=DetectionConfig(),
+        tracking_config=TrackingConfig(),
+        tracking_mode="hybrid",
+        channel="green1",
+        output_dir=product_dir,
+        grid_calibration_path=grid_path,
+        catalog_cache_path=catalog_path,
+        spherical_tracking_config=SphericalTrackingConfig(min_track_length=2),
+        metadata_loader=lambda source: frames[paths.index(source)].metadata,
+    )
+
+    first = run_cli_workflow(output_path=tmp_path / "hybrid-first.pdf", **kwargs)
+    assert first.tracking_mode == "hybrid"
+    assert first.track_count == 2
+    assert first.catalog_track_count == 1
+    assert first.fallback_track_count == 1
+    assert first.assigned_detection_count == 6
+    assert first.unassigned_detection_count == 0
+    assert first.stellar_identification_product_path == (
+        product_dir / "stellar_identifications.npz"
+    ).resolve()
+    assert first.fallback_tracking_product_path == (
+        product_dir / "fallback_temporal_tracks.npz"
+    ).resolve()
+    assert first.reused_fallback_tracking_product is False
+    assert detection_calls == [1]
+    assert matcher_calls == [1]
+    assert fallback_calls == [3]
+
+    monkeypatch.setattr(
+        "gonet_astrometry.runner._prepare_multichannel_report_reference",
+        lambda sequence_arg, reference_path, detector: (_prepared(), catalogs[0]),
+    )
+    second = run_cli_workflow(output_path=tmp_path / "hybrid-second.pdf", **kwargs)
+    assert second.reused_detection_product is True
+    assert second.reused_stellar_identification_product is True
+    assert second.reused_fallback_tracking_product is True
+    assert second.track_count == 2
+    assert detection_calls == [1]
+    assert matcher_calls == [1]
+    assert fallback_calls == [3]

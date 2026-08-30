@@ -114,8 +114,8 @@ also converts tracked full-sensor pixels into Grid-frame unit rays and fits one
 robust common apparent-sky rotation axis at the fixed sidereal rate. The result
 is cached independently as ``sidereal_rotation.npz`` and can be recomputed with
 ``--overwrite-solution`` without touching cached detections or tracks. The PDF
-then gains a third page showing spherical residuals and accepted/rejected
-tracklets. For example:
+then gains a third page in legacy tracking mode showing spherical residuals and
+accepted/rejected tracklets. For example:
 
 ```bash
 gonet-astrometry run /path/to/night \
@@ -162,8 +162,16 @@ refines that rigid three-dimensional rotation with matches from the full sequenc
 and then identifies visible stars independently in every frame down to V<=4.5 by
 default. The portable ``stellar_identifications.npz`` product records expected
 stars, matched detection identifiers, unmatched expected stars, residuals, and
-the fitted attitude. The existing spherical/sidereal tracker is deliberately left
-unchanged while this new association product is validated on full nights.
+the fitted attitude.
+
+Grid-assisted runs now expose ``--tracking-mode legacy|catalog|hybrid``. The
+default remains ``legacy`` while the catalog-first path is validated. ``catalog``
+groups matched detections directly by catalog identifier, so no blind temporal
+association or fragment merge is required for known stars. ``hybrid`` does the
+same for catalog matches and then runs the existing spherical tracker only on
+detections that were not claimed by catalog identification. The hybrid fallback
+tracklets are cached separately in ``fallback_temporal_tracks.npz``. Catalog and
+hybrid modes imply stellar identification automatically.
 
 The fitted rotation pole still leaves one exact camera-attitude twist around the
 celestial axis. Add ``--solve-orientation`` to resolve that final degree of

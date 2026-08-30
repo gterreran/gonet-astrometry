@@ -42,6 +42,9 @@ STELLAR_TRACKING_PIPELINE_REVISION = 1
 STELLAR_IDENTIFICATION_PIPELINE_REVISION = 2
 """Manual cache revision for sequence-wide catalog identification semantics."""
 
+HYBRID_FALLBACK_TRACKING_PIPELINE_REVISION = 1
+"""Manual cache revision for hybrid unmatched-detection tracking semantics."""
+
 
 @dataclass(frozen=True, slots=True)
 class InputFingerprint:
@@ -179,6 +182,26 @@ def stellar_identification_product_id(
         "grid_calibration": grid.as_mapping(),
         "catalog": catalog.as_mapping(),
         "identification_config": asdict(config),
+    }
+    return _digest(payload)
+
+
+def hybrid_fallback_tracking_product_id(
+    detection_id: str,
+    stellar_identification_id: str,
+    grid_calibration_path: Path,
+    config: SphericalTrackingConfig,
+) -> str:
+    """Return the identity of hybrid spherical fallback associations."""
+    grid = fingerprint_inputs((grid_calibration_path,))[0]
+    payload = {
+        "kind": "hybrid-fallback-temporal-tracks",
+        "schema_version": 1,
+        "pipeline_revision": HYBRID_FALLBACK_TRACKING_PIPELINE_REVISION,
+        "detection_product_id": detection_id,
+        "stellar_identification_product_id": stellar_identification_id,
+        "grid_calibration": grid.as_mapping(),
+        "tracking_config": asdict(config),
     }
     return _digest(payload)
 
