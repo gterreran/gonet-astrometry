@@ -386,9 +386,7 @@ class IndependentChannelSEPDetector:
 
         transform = self.calibration.transform
         if not isinstance(transform, PortableGridTransform):
-            raise TypeError(
-                "Grid-radius field caps require a portable Grid transform"
-            )
+            raise TypeError("Grid-radius field caps require a portable Grid transform")
         _, calibrated_max = transform.evaluator.calibrated_angular_range_deg
         if radius_deg > float(calibrated_max) + 1.0e-9:
             raise ValueError(
@@ -656,7 +654,7 @@ def fuse_channel_detections(
         GONetChannel,
         dict[int, ChannelDetection],
     ] = {
-        channel: {index: item for index, item in enumerate(by_channel.get(channel, ()))}
+        channel: dict(enumerate(by_channel.get(channel, ())))
         for channel in GONET_CHANNELS
     }
     reverse_index: dict[int, tuple[GONetChannel, int]] = {}

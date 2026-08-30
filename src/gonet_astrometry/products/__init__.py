@@ -21,6 +21,7 @@ from gonet_astrometry.products.provenance import (
     ORIENTATION_PIPELINE_REVISION,
     SIDEREAL_PIPELINE_REVISION,
     SPHERICAL_TRACKING_PIPELINE_REVISION,
+    STELLAR_IDENTIFICATION_PIPELINE_REVISION,
     STELLAR_TRACKING_PIPELINE_REVISION,
     TRACKING_PIPELINE_REVISION,
     detection_product_id,
@@ -28,6 +29,7 @@ from gonet_astrometry.products.provenance import (
     orientation_product_id,
     sidereal_product_id,
     spherical_tracking_product_id,
+    stellar_identification_product_id,
     stellar_tracking_product_id,
     tracking_product_id,
 )
@@ -35,6 +37,11 @@ from gonet_astrometry.products.sidereal import (
     SiderealProduct,
     load_sidereal_product,
     save_sidereal_product,
+)
+from gonet_astrometry.products.stellar_identifications import (
+    StellarIdentificationProduct,
+    load_stellar_identification_product,
+    save_stellar_identification_product,
 )
 from gonet_astrometry.products.stellar_tracking import (
     StellarTrackingProduct,
@@ -63,8 +70,10 @@ __all__ = [
     "ProductStore",
     "SIDEREAL_PIPELINE_REVISION",
     "SPHERICAL_TRACKING_PIPELINE_REVISION",
+    "STELLAR_IDENTIFICATION_PIPELINE_REVISION",
     "STELLAR_TRACKING_PIPELINE_REVISION",
     "SiderealProduct",
+    "StellarIdentificationProduct",
     "StellarTrackingProduct",
     "TemporalTrackingProduct",
     "TRACKING_PIPELINE_REVISION",
@@ -73,6 +82,7 @@ __all__ = [
     "load_detection_product",
     "load_orientation_product",
     "load_sidereal_product",
+    "load_stellar_identification_product",
     "load_stellar_tracking_product",
     "load_temporal_tracking_product",
     "load_tracking_product",
@@ -80,12 +90,14 @@ __all__ = [
     "save_detection_product",
     "save_orientation_product",
     "save_sidereal_product",
+    "save_stellar_identification_product",
     "save_stellar_tracking_product",
     "save_temporal_tracking_product",
     "save_tracking_product",
     "orientation_product_id",
     "sidereal_product_id",
     "spherical_tracking_product_id",
+    "stellar_identification_product_id",
     "stellar_tracking_product_id",
     "tracking_product_id",
 ]

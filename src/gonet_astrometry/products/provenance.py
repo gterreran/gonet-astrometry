@@ -14,6 +14,7 @@ from gonet_astrometry.detection.multichannel import MultiChannelSEPConfig
 from gonet_astrometry.solving.orientation import OrientationFitConfig
 from gonet_astrometry.solving.sidereal import SiderealFitConfig
 from gonet_astrometry.solving.stellar_tracks import StellarTrackMergeConfig
+from gonet_astrometry.tracking.catalog_identification import StellarIdentificationConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
 
@@ -37,6 +38,9 @@ SPHERICAL_TRACKING_PIPELINE_REVISION = 1
 
 STELLAR_TRACKING_PIPELINE_REVISION = 1
 """Manual cache revision for sidereal fragment bootstrap/merge semantics."""
+
+STELLAR_IDENTIFICATION_PIPELINE_REVISION = 2
+"""Manual cache revision for sequence-wide catalog identification semantics."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +158,27 @@ def multichannel_detection_product_id(
         "grid_calibration": grid.as_mapping(),
         "field_mask": field_mask,
         "location_tolerance_m": location_tolerance_m,
+    }
+    return _digest(payload)
+
+
+def stellar_identification_product_id(
+    detection_id: str,
+    grid_calibration_path: Path,
+    catalog_path: Path,
+    config: StellarIdentificationConfig,
+) -> str:
+    """Return the semantic identity of catalog stellar identifications."""
+    grid = fingerprint_inputs((grid_calibration_path,))[0]
+    catalog = fingerprint_inputs((catalog_path,))[0]
+    payload = {
+        "kind": "stellar-identifications",
+        "schema_version": 1,
+        "pipeline_revision": STELLAR_IDENTIFICATION_PIPELINE_REVISION,
+        "detection_product_id": detection_id,
+        "grid_calibration": grid.as_mapping(),
+        "catalog": catalog.as_mapping(),
+        "identification_config": asdict(config),
     }
     return _digest(payload)
 

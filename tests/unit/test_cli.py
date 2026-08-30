@@ -179,6 +179,16 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
             "0.05",
             "--orientation-max-declination-p95-deg",
             "0.12",
+            "--identify-stars",
+            "--overwrite-identifications",
+            "--identification-limiting-magnitude",
+            "4.7",
+            "--identification-bootstrap-limiting-magnitude",
+            "3.1",
+            "--identification-final-radius-px",
+            "12",
+            "--identification-bright-rescue-radius-px",
+            "22",
         ]
     )
 
@@ -222,6 +232,12 @@ def test_run_parser_exposes_detection_and_tracking_settings() -> None:
     assert arguments.orientation_track_validation_rms_deg == 0.25
     assert arguments.orientation_max_declination_robust_sigma_deg == 0.05
     assert arguments.orientation_max_declination_p95_deg == 0.12
+    assert arguments.identify_stars is True
+    assert arguments.overwrite_identifications is True
+    assert arguments.identification_limiting_magnitude == 4.7
+    assert arguments.identification_bootstrap_limiting_magnitude == 3.1
+    assert arguments.identification_final_radius_px == 12.0
+    assert arguments.identification_bright_rescue_radius_px == 22.0
 
 
 def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
@@ -294,6 +310,13 @@ def test_main_runs_batch_workflow(monkeypatch, capsys) -> None:
     assert calls[0]["catalog_cache_path"] is None
     assert calls[0]["overwrite_orientation"] is False
     assert calls[0]["orientation_config"].min_matches == 8
+    assert calls[0]["identify_stars"] is False
+    assert calls[0]["overwrite_identifications"] is False
+    assert calls[0]["stellar_identification_config"].limiting_magnitude == 4.5
+    assert (
+        calls[0]["stellar_identification_config"].bootstrap_limiting_magnitude
+        == 3.2
+    )
     assert "300 detections" in capsys.readouterr().out
 
 

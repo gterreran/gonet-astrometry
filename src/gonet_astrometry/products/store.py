@@ -34,6 +34,11 @@ class ProductStore:
         return self.output_dir / "temporal_tracks.npz"
 
     @property
+    def stellar_identifications_path(self) -> Path:
+        """Return the catalog stellar-identification product path."""
+        return self.output_dir / "stellar_identifications.npz"
+
+    @property
     def stellar_tracks_path(self) -> Path:
         """Return the merged physical stellar-track product path."""
         return self.output_dir / "stellar_tracks.npz"

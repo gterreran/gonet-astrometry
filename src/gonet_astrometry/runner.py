@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
+import numpy as np
+from tqdm import tqdm
+
 from gonet_astrometry.adapters.gonet_wizard import (
     GONetChannel,
     get_raw_channel,
@@ -47,6 +50,7 @@ from gonet_astrometry.products import (
     ProductError,
     ProductStore,
     SiderealProduct,
+    StellarIdentificationProduct,
     StellarTrackingProduct,
     TemporalTrackingProduct,
     TrackingProduct,
@@ -54,6 +58,7 @@ from gonet_astrometry.products import (
     load_detection_product,
     load_orientation_product,
     load_sidereal_product,
+    load_stellar_identification_product,
     load_stellar_tracking_product,
     load_temporal_tracking_product,
     load_tracking_product,
@@ -62,11 +67,13 @@ from gonet_astrometry.products import (
     save_detection_product,
     save_orientation_product,
     save_sidereal_product,
+    save_stellar_identification_product,
     save_stellar_tracking_product,
     save_temporal_tracking_product,
     save_tracking_product,
     sidereal_product_id,
     spherical_tracking_product_id,
+    stellar_identification_product_id,
     stellar_tracking_product_id,
     tracking_product_id,
 )
@@ -84,6 +91,11 @@ from gonet_astrometry.solving.stellar_tracks import (
     SiderealTrackMerger,
     StellarTrackMergeConfig,
     StellarTrackMergeResult,
+)
+from gonet_astrometry.tracking.catalog_identification import (
+    CatalogSequenceMatcher,
+    StellarIdentificationConfig,
+    StellarIdentificationResult,
 )
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.image_plane import (
@@ -231,6 +243,7 @@ class TrackingRunArtifacts:
     multichannel_detection_config: MultiChannelSEPConfig | None = None
     spherical_tracking_config: SphericalTrackingConfig | None = None
     stellar_merge_config: StellarTrackMergeConfig | None = None
+    stellar_identification_result: StellarIdentificationResult | None = None
     orientation_solution: AbsoluteOrientationSolution | None = None
     orientation_fit_config: OrientationFitConfig | None = None
 
@@ -253,12 +266,14 @@ class RunSummary:
     tracking_product_path: Path | None = None
     temporal_tracking_product_path: Path | None = None
     stellar_tracking_product_path: Path | None = None
+    stellar_identification_product_path: Path | None = None
     sidereal_product_path: Path | None = None
     orientation_product_path: Path | None = None
     reused_detection_product: bool = False
     reused_tracking_product: bool = False
     reused_temporal_tracking_product: bool = False
     reused_stellar_tracking_product: bool = False
+    reused_stellar_identification_product: bool = False
     reused_sidereal_product: bool = False
     reused_orientation_product: bool = False
 
@@ -281,6 +296,7 @@ def preflight_tracking_locations(
     tolerance_m: float,
     *,
     metadata_loader: MetadataLoader = load_gonet_metadata,
+    show_progress: bool = False,
 ) -> LocationPreflight:
     """Filter obvious GPS failures and keep the dominant observing site.
 
@@ -298,7 +314,14 @@ def preflight_tracking_locations(
             key=lambda item: str(item).casefold(),
         )
     )
-    for index, path in enumerate(ordered, start=1):
+    metadata_progress = tqdm(
+        ordered,
+        desc="Reading metadata",
+        unit="image",
+        dynamic_ncols=True,
+        disable=None if show_progress else True,
+    )
+    for index, path in enumerate(metadata_progress, start=1):
         try:
             metadata = metadata_loader(path)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -417,7 +440,6 @@ def execute_detection_run(
     )
 
 
-
 def execute_multichannel_detection_run(
     paths: Iterable[Path],
     detection_config: DetectionConfig,
@@ -426,6 +448,7 @@ def execute_multichannel_detection_run(
     *,
     location_tolerance_m: float,
     workers: int = 1,
+    show_progress: bool = False,
     grid_calibration_path: Path | None = None,
     field_mask_path: Path | None = None,
     detector: IndependentChannelSEPDetector | None = None,
@@ -466,7 +489,14 @@ def execute_multichannel_detection_run(
         reference_prepared_value: PreparedDetectionImage | None = None
         reference_catalog_value: DetectionCatalog | None = None
 
-        for index, path in enumerate(files, start=1):
+        detection_progress = tqdm(
+            files,
+            desc="Detecting sources",
+            unit="image",
+            dynamic_ncols=True,
+            disable=None if show_progress else True,
+        )
+        for index, path in enumerate(detection_progress, start=1):
             frame = frame_loader(path)
             started = clock()
             catalog = source_detector.detect(str(path), frame)
@@ -478,7 +508,8 @@ def execute_multichannel_detection_run(
 
             epoch = DetectionEpoch.from_frame(str(path), frame, catalog)
             epochs.append(epoch)
-            logger.info(
+            detection_progress.set_postfix(candidates=len(catalog), refresh=False)
+            logger.debug(
                 "Multichannel detection %d/%d | %s | %d candidates | %.3f s | "
                 "midpoint %s",
                 index,
@@ -552,7 +583,15 @@ def execute_multichannel_detection_run(
                 executor.submit(_detect_multichannel_file_worker, path): path
                 for path in files
             }
-            for completed, future in enumerate(as_completed(futures), start=1):
+            detection_progress = tqdm(
+                as_completed(futures),
+                total=len(futures),
+                desc="Detecting sources",
+                unit="image",
+                dynamic_ncols=True,
+                disable=None if show_progress else True,
+            )
+            for completed, future in enumerate(detection_progress, start=1):
                 path = futures[future]
                 try:
                     result = future.result()
@@ -563,7 +602,10 @@ def execute_multichannel_detection_run(
                         f"Multichannel detection failed for {path}: {exc}"
                     ) from exc
                 results_by_path[result.path] = result
-                logger.info(
+                detection_progress.set_postfix(
+                    candidates=len(result.epoch.catalog), refresh=False
+                )
+                logger.debug(
                     "Multichannel detection %d/%d | %s | %d candidates | %.3f s | "
                     "midpoint %s",
                     completed,
@@ -756,7 +798,8 @@ def _prepare_report_reference(
     catalog = sequence.catalog_for(str(reference_path))
     if catalog is None:
         raise ValueError(
-            f"Detection product is missing the catalog for report image {reference_path}"
+            "Detection product is missing the catalog for report image "
+            f"{reference_path}"
         )
     return prepared, catalog
 
@@ -776,7 +819,6 @@ def _prepare_cached_reference(
     )
 
 
-
 def _prepare_multichannel_report_reference(
     sequence: DetectionSequence,
     reference_path: Path,
@@ -790,10 +832,10 @@ def _prepare_multichannel_report_reference(
     catalog = sequence.catalog_for(str(reference_path))
     if catalog is None:
         raise ValueError(
-            f"Detection product is missing the catalog for report image {reference_path}"
+            "Detection product is missing the catalog for report image "
+            f"{reference_path}"
         )
     return prepared, catalog
-
 
 
 def _run_grid_cli_workflow(
@@ -821,6 +863,9 @@ def _run_grid_cli_workflow(
     orientation_config: OrientationFitConfig | None,
     catalog_cache_path: Path | None,
     overwrite_orientation: bool,
+    identify_stars: bool,
+    stellar_identification_config: StellarIdentificationConfig | None,
+    overwrite_identifications: bool,
     metadata_loader: MetadataLoader,
 ) -> RunSummary:
     """Run the Grid-assisted multichannel/spherical stellar pipeline."""
@@ -915,6 +960,7 @@ def _run_grid_cli_workflow(
             grid_calibration,
             location_tolerance_m=tracking_config.location_tolerance_m,
             workers=detection_workers,
+            show_progress=True,
             grid_calibration_path=grid_path,
             field_mask_path=resolved_field_mask_path,
             detector=report_detector,
@@ -963,15 +1009,136 @@ def _run_grid_cli_workflow(
         reference_prepared = detected.reference_prepared
         reference_catalog = detected.reference_catalog
     else:
-        reference_prepared, reference_catalog = (
-            _prepare_multichannel_report_reference(
-                detection_product.sequence,
-                report_reference_path,
-                report_detector,
-            )
+        reference_prepared, reference_catalog = _prepare_multichannel_report_reference(
+            detection_product.sequence,
+            report_reference_path,
+            report_detector,
         )
     if reference_image_path is not None:
         logger.info("Using report reference image %s", report_reference_path)
+
+    identification_result: StellarIdentificationResult | None = None
+    stellar_identification_product_path: Path | None = None
+    reused_identification = False
+    if identify_stars:
+        identification_config = (
+            stellar_identification_config or StellarIdentificationConfig()
+        )
+        cache_path = (
+            (catalog_cache_path or store.bright_star_catalog_path)
+            .expanduser()
+            .resolve()
+        )
+        catalog_was_cached = cache_path.exists()
+        bright_catalog = load_or_fetch_bright_star_catalog(cache_path)
+        if catalog_was_cached:
+            logger.info("Reusing bright-star catalog cache %s", cache_path)
+        else:
+            logger.info(
+                "Fetched and cached Bright Star Catalogue %s | %d stars",
+                cache_path,
+                len(bright_catalog.stars),
+            )
+        expected_identification_id = stellar_identification_product_id(
+            detection_product.product_id,
+            grid_path,
+            cache_path,
+            identification_config,
+        )
+        identification_product: StellarIdentificationProduct | None = None
+        if (
+            reused_detection
+            and store.stellar_identifications_path.exists()
+            and not overwrite_products
+            and not overwrite_identifications
+        ):
+            try:
+                identification_product = load_stellar_identification_product(
+                    store.stellar_identifications_path,
+                    detection_product.sequence,
+                    expected_product_id=expected_identification_id,
+                    expected_detection_product_id=detection_product.product_id,
+                )
+                reused_identification = True
+                logger.info(
+                    "Reusing stellar identifications %s | %d/%d star-epochs "
+                    "matched | optical axis az=%.3f deg alt=%.3f deg | median "
+                    "residual %.3f arcmin",
+                    store.stellar_identifications_path,
+                    identification_product.result.matched_star_count,
+                    identification_product.result.visible_star_count,
+                    identification_product.result.optical_axis_azimuth_deg,
+                    identification_product.result.optical_axis_altitude_deg,
+                    identification_product.result.fit_median_residual_arcmin,
+                )
+            except ProductError as exc:
+                logger.warning(
+                    "Ignoring incompatible stellar-identification product %s: %s",
+                    store.stellar_identifications_path,
+                    exc,
+                )
+        if identification_product is None:
+            catalog_stars = bright_catalog.query_bright_stars(
+                detection_product.sequence.epochs[0].exposure_midpoint,
+                identification_config.limiting_magnitude,
+            )
+            identification_result = CatalogSequenceMatcher(
+                identification_config
+            ).fit_and_match(
+                detection_product.sequence,
+                grid_calibration,
+                catalog_stars,
+                field_mask=detection_product.field_mask,
+                field_mask_keep_margin_px=(detection_product.field_mask_keep_margin_px),
+                show_progress=True,
+            )
+            identification_product = StellarIdentificationProduct(
+                product_id=expected_identification_id,
+                detection_product_id=detection_product.product_id,
+                grid_calibration_path=grid_path,
+                catalog_path=cache_path,
+                config=identification_config,
+                result=identification_result,
+            )
+            written_identifications = save_stellar_identification_product(
+                store.stellar_identifications_path,
+                identification_product,
+            )
+            catalog_tracks = identification_result.catalog_tracks(
+                detection_product.sequence,
+                min_track_length=identification_config.minimum_catalog_track_length,
+            )
+            unmatched_detection_count = (
+                detection_product.sequence.total_detections
+                - identification_result.matched_star_count
+            )
+            frame_match_counts = np.asarray(
+                [epoch.matched_star_count for epoch in identification_result.epochs],
+                dtype=np.float64,
+            )
+            logger.info(
+                "Wrote stellar identifications %s | %d/%d star-epochs matched | "
+                "%d unmatched detections | %d catalog tracks | optical axis "
+                "az=%.3f deg alt=%.3f deg | median/P90 residual %.3f/%.3f "
+                "arcmin | matches/frame median %.1f P10/P90 %.1f/%.1f",
+                written_identifications,
+                identification_result.matched_star_count,
+                identification_result.visible_star_count,
+                unmatched_detection_count,
+                len(catalog_tracks.tracks),
+                identification_result.optical_axis_azimuth_deg,
+                identification_result.optical_axis_altitude_deg,
+                identification_result.fit_median_residual_arcmin,
+                identification_result.fit_p90_residual_arcmin,
+                float(np.median(frame_match_counts)),
+                float(np.percentile(frame_match_counts, 10)),
+                float(np.percentile(frame_match_counts, 90)),
+            )
+        else:
+            identification_result = identification_product.result
+        stellar_identification_product_path = (
+            store.stellar_identifications_path.resolve()
+        )
 
     result = ImagePlaneTrackingResult(detection_product.sequence, ())
     temporal_product: TemporalTrackingProduct | None = None
@@ -1326,6 +1493,7 @@ def _run_grid_cli_workflow(
         multichannel_detection_config=multi_config,
         spherical_tracking_config=spherical_config,
         stellar_merge_config=merge_config,
+        stellar_identification_result=identification_result,
         orientation_solution=orientation_solution,
         orientation_fit_config=orientation_fit_config,
     )
@@ -1355,6 +1523,7 @@ def _run_grid_cli_workflow(
         tracking_product_path=tracking_product_path,
         temporal_tracking_product_path=temporal_tracking_product_path,
         stellar_tracking_product_path=stellar_tracking_product_path,
+        stellar_identification_product_path=stellar_identification_product_path,
         sidereal_product_path=sidereal_product_path,
         orientation_product_path=orientation_product_path,
         reused_detection_product=reused_detection,
@@ -1365,6 +1534,7 @@ def _run_grid_cli_workflow(
         ),
         reused_temporal_tracking_product=reused_temporal,
         reused_stellar_tracking_product=reused_stellar,
+        reused_stellar_identification_product=reused_identification,
         reused_sidereal_product=reused_sidereal,
         reused_orientation_product=reused_orientation,
     )
@@ -1395,6 +1565,9 @@ def run_cli_workflow(
     orientation_config: OrientationFitConfig | None = None,
     catalog_cache_path: Path | None = None,
     overwrite_orientation: bool = False,
+    identify_stars: bool = False,
+    stellar_identification_config: StellarIdentificationConfig | None = None,
+    overwrite_identifications: bool = False,
     metadata_loader: MetadataLoader = load_gonet_metadata,
 ) -> RunSummary:
     """Discover inputs, reuse compatible products, and write the PDF report.
@@ -1434,6 +1607,8 @@ def run_cli_workflow(
 
     if field_mask_path is not None and grid_calibration_path is None:
         raise ValueError("--field-mask requires --grid-calibration")
+    if identify_stars and grid_calibration_path is None:
+        raise ValueError("--identify-stars requires --grid-calibration")
     if detection_workers != 1 and grid_calibration_path is None:
         raise ValueError(
             "--workers greater than 1 currently requires --grid-calibration"
@@ -1464,6 +1639,9 @@ def run_cli_workflow(
             orientation_config=orientation_config,
             catalog_cache_path=catalog_cache_path,
             overwrite_orientation=overwrite_orientation,
+            identify_stars=identify_stars,
+            stellar_identification_config=stellar_identification_config,
+            overwrite_identifications=overwrite_identifications,
             metadata_loader=metadata_loader,
         )
 
@@ -1503,6 +1681,7 @@ def run_cli_workflow(
             discovery.files,
             tracking_config.location_tolerance_m,
             metadata_loader=metadata_loader,
+            show_progress=True,
         )
         _log_location_preflight(preflight)
         if len(preflight.files) < 2:

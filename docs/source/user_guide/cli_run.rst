@@ -139,7 +139,8 @@ default layout is::
        detections.npz
        tracks.npz
        sidereal_rotation.npz      # when --grid-calibration is supplied
-       bright_star_catalog.npz     # after the first orientation solve
+       stellar_identifications.npz # when --identify-stars is supplied
+       bright_star_catalog.npz     # after first catalog-assisted operation
        absolute_orientation.npz    # when --solve-orientation is supplied
        tracking.pdf
 
@@ -249,6 +250,50 @@ sidereal fit. It overlays consistent/rejected/insufficient tracks, marks the
 fitted apparent rotation pole when it lies inside Grid coverage, plots the
 per-track de-rotated residual distribution and residual versus track duration,
 and records the Grid-frame pole vector and global RMS/median/P95 residuals.
+
+Per-frame stellar identification
+--------------------------------
+
+``--identify-stars`` adds a catalog-association stage without replacing the
+current spherical/sidereal tracker.  The Bright Star Catalogue is loaded once
+from ``--catalog-cache`` (or ``<output-dir>/bright_star_catalog.npz``) and the
+same catalog records are propagated to every exposure time.  No network query
+is performed per image.
+
+The matcher first selects a high-confidence bright subset (V<=3.2 by default)
+and performs an automatic 0--360 degree roll search under the near-zenith camera
+assumption.  Gated one-to-one matches determine an initial attitude.  Matched
+detection Grid rays and catalog ENU rays then solve the complete rigid 3-D
+Grid-to-ENU rotation directly.  Matches from all sequence frames refine the same
+common attitude before the final per-frame association pass.
+
+The final catalog extends to V<=4.5 by default, reflecting the measured depth of
+the 3.5-sigma production detector while retaining a modest safety margin.  Each
+frame records three useful populations: detections assigned to catalog stars,
+detections without a catalog assignment, and visible catalog stars without a
+detection.  A relaxed bright-star rescue pass is available for the known
+position-dependent residuals of the Grid calibration.
+
+The result is cached as ``stellar_identifications.npz`` and includes the fitted
+Grid-to-ENU matrix, per-frame expected-star positions, catalog magnitudes, match
+residuals, and matched detection identifiers.  Catalog tracks can therefore be
+constructed simply by grouping matched detections by catalog identifier.  During
+this validation phase, the legacy/spherical temporal tracker still runs exactly
+as before; a later hybrid mode will use it only for unmatched detections or poor
+catalog frames.  Use ``--overwrite-identifications`` to recompute only this
+product.  ``--detection-only --identify-stars`` is supported when only detection
+and catalog association are desired.
+
+Example::
+
+   gonet-astrometry run /path/to/night \
+       --algorithm sep \
+       --grid-calibration /path/to/camera_calibration.npz \
+       --field-mask /path/to/field_mask.npz \
+       --identify-stars \
+       --detection-only \
+       --output-dir gonet_astrometry_output
+
 
 Absolute camera orientation
 ---------------------------

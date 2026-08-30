@@ -15,6 +15,7 @@ from gonet_astrometry.detection.registry import DETECTOR_SPECS
 from gonet_astrometry.solving.orientation import OrientationFitConfig
 from gonet_astrometry.solving.sidereal import SiderealFitConfig
 from gonet_astrometry.solving.stellar_tracks import StellarTrackMergeConfig
+from gonet_astrometry.tracking.catalog_identification import StellarIdentificationConfig
 from gonet_astrometry.tracking.config import TrackingConfig
 from gonet_astrometry.tracking.spherical import SphericalTrackingConfig
 
@@ -25,6 +26,7 @@ _SPHERICAL_DEFAULTS = SphericalTrackingConfig()
 _STELLAR_MERGE_DEFAULTS = StellarTrackMergeConfig()
 _SIDEREAL_DEFAULTS = SiderealFitConfig()
 _ORIENTATION_DEFAULTS = OrientationFitConfig()
+_STELLAR_IDENTIFICATION_DEFAULTS = StellarIdentificationConfig()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -163,9 +165,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--detection-only",
         action="store_true",
         help=(
-            "Stop after source detection. Skip spherical temporal tracking, "
-            "stellar merging, sidereal fitting, and absolute orientation. "
-            "Grid-assisted runs may therefore operate on a single image."
+            "Skip spherical temporal tracking, stellar merging, sidereal fitting, "
+            "and absolute orientation. If --identify-stars is supplied, catalog "
+            "identification still runs after detection. Grid-assisted runs may "
+            "therefore operate on a single image."
         ),
     )
     run.add_argument(
@@ -202,6 +205,24 @@ def build_parser() -> argparse.ArgumentParser:
             "retaining compatible upstream products."
         ),
     )
+    run.add_argument(
+        "--identify-stars",
+        action="store_true",
+        help=(
+            "Fit one sequence-wide Grid-to-horizon attitude and identify visible "
+            "Bright Star Catalogue stars independently in every frame. This "
+            "writes stellar_identifications.npz without changing the current "
+            "legacy/spherical tracking path."
+        ),
+    )
+    run.add_argument(
+        "--overwrite-identifications",
+        action="store_true",
+        help=(
+            "Recompute catalog stellar identifications while retaining compatible "
+            "detections and other upstream products."
+        ),
+    )
     _add_detection_arguments(run)
     _add_tracking_arguments(run)
     _add_multichannel_arguments(run)
@@ -209,6 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_stellar_merge_arguments(run)
     _add_sidereal_arguments(run)
     _add_orientation_arguments(run)
+    _add_stellar_identification_arguments(run)
     return parser
 
 
@@ -369,7 +391,6 @@ def _add_tracking_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-
 def _add_multichannel_arguments(parser: argparse.ArgumentParser) -> None:
     """Add independent native-channel SEP settings."""
     parser.add_argument(
@@ -438,9 +459,7 @@ def _multichannel_config(arguments: argparse.Namespace) -> MultiChannelSEPConfig
         grid_search_radius_deg=arguments.grid_search_radius_deg,
         grid_acceptance_radius_deg=arguments.grid_acceptance_radius_deg,
         channel_match_radius_px=arguments.multichannel_match_radius_px,
-        background_box_size_compact_px=(
-            arguments.multichannel_background_box_size_px
-        ),
+        background_box_size_compact_px=(arguments.multichannel_background_box_size_px),
         minimum_channel_support=arguments.multichannel_min_support,
     )
 
@@ -506,26 +525,18 @@ def _spherical_tracking_config(
     return SphericalTrackingConfig(
         min_track_length=arguments.spherical_min_track_length,
         max_gap_minutes=arguments.spherical_max_gap_minutes,
-        single_point_max_gap_seconds=(
-            arguments.spherical_single_point_max_gap_seconds
-        ),
+        single_point_max_gap_seconds=(arguments.spherical_single_point_max_gap_seconds),
         max_initial_speed_deg_per_minute=(
             arguments.spherical_max_initial_speed_deg_per_minute
         ),
         initial_position_margin_arcmin=arguments.spherical_initial_margin_arcmin,
-        prediction_tolerance_arcmin=(
-            arguments.spherical_prediction_tolerance_arcmin
-        ),
-        prediction_reference_seconds=(
-            arguments.spherical_prediction_reference_seconds
-        ),
+        prediction_tolerance_arcmin=(arguments.spherical_prediction_tolerance_arcmin),
+        prediction_reference_seconds=(arguments.spherical_prediction_reference_seconds),
         max_prediction_tolerance_arcmin=(
             arguments.spherical_max_prediction_tolerance_arcmin
         ),
         velocity_fit_points=arguments.spherical_velocity_fit_points,
-        inverse_reprojection_tolerance_px=(
-            arguments.spherical_inverse_tolerance_px
-        ),
+        inverse_reprojection_tolerance_px=(arguments.spherical_inverse_tolerance_px),
     )
 
 
@@ -612,6 +623,95 @@ def _sidereal_config(arguments: argparse.Namespace) -> SiderealFitConfig:
         max_fit_tracks=arguments.sidereal_max_fit_tracks,
         max_fit_points_per_track=arguments.sidereal_max_points_per_track,
         inverse_reprojection_tolerance_px=arguments.sidereal_inverse_tolerance_px,
+    )
+
+
+def _add_stellar_identification_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add sequence-wide catalog-identification settings to ``parser``."""
+    defaults = _STELLAR_IDENTIFICATION_DEFAULTS
+    parser.add_argument(
+        "--identification-limiting-magnitude",
+        type=float,
+        default=defaults.limiting_magnitude,
+        help="Faintest catalog star considered for per-frame identification.",
+    )
+    parser.add_argument(
+        "--identification-bootstrap-limiting-magnitude",
+        type=float,
+        default=defaults.bootstrap_limiting_magnitude,
+        help="Faintest catalog star used to bootstrap/refine the common attitude.",
+    )
+    parser.add_argument(
+        "--identification-min-altitude-deg",
+        type=float,
+        default=defaults.min_catalog_altitude_deg,
+    )
+    parser.add_argument(
+        "--identification-rotation-step-deg",
+        type=float,
+        default=defaults.bootstrap_rotation_step_deg,
+        help="Coarse all-sky roll search step used for automatic attitude bootstrap.",
+    )
+    parser.add_argument(
+        "--identification-bootstrap-radius-px",
+        type=float,
+        default=defaults.bootstrap_match_radius_px,
+    )
+    parser.add_argument(
+        "--identification-final-radius-px",
+        type=float,
+        default=defaults.final_match_radius_px,
+    )
+    parser.add_argument(
+        "--identification-bright-rescue-magnitude",
+        type=float,
+        default=defaults.bright_rescue_magnitude,
+    )
+    parser.add_argument(
+        "--identification-bright-rescue-radius-px",
+        type=float,
+        default=defaults.bright_rescue_radius_px,
+    )
+    parser.add_argument(
+        "--identification-sequence-refinement-radius-px",
+        type=float,
+        default=defaults.sequence_refinement_radius_px,
+    )
+    parser.add_argument(
+        "--identification-sequence-refinement-iterations",
+        type=int,
+        default=defaults.sequence_refinement_iterations,
+    )
+
+
+def _stellar_identification_config(
+    arguments: argparse.Namespace,
+) -> StellarIdentificationConfig:
+    """Construct sequence-wide stellar-identification settings."""
+    defaults = _STELLAR_IDENTIFICATION_DEFAULTS
+    return StellarIdentificationConfig(
+        limiting_magnitude=arguments.identification_limiting_magnitude,
+        bootstrap_limiting_magnitude=(
+            arguments.identification_bootstrap_limiting_magnitude
+        ),
+        min_catalog_altitude_deg=arguments.identification_min_altitude_deg,
+        bootstrap_rotation_step_deg=arguments.identification_rotation_step_deg,
+        bootstrap_match_radius_px=arguments.identification_bootstrap_radius_px,
+        refinement_radii_px=defaults.refinement_radii_px,
+        min_bootstrap_matches=defaults.min_bootstrap_matches,
+        sequence_refinement_radius_px=(
+            arguments.identification_sequence_refinement_radius_px
+        ),
+        sequence_refinement_iterations=(
+            arguments.identification_sequence_refinement_iterations
+        ),
+        final_match_radius_px=arguments.identification_final_radius_px,
+        bright_rescue_magnitude=(arguments.identification_bright_rescue_magnitude),
+        bright_rescue_radius_px=(arguments.identification_bright_rescue_radius_px),
+        robust_clip_sigma=defaults.robust_clip_sigma,
+        robust_clip_floor_arcmin=defaults.robust_clip_floor_arcmin,
+        max_refinement_pairs=defaults.max_refinement_pairs,
+        minimum_catalog_track_length=defaults.minimum_catalog_track_length,
     )
 
 
@@ -867,6 +967,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             orientation_config=_orientation_config(arguments),
             catalog_cache_path=arguments.catalog_cache,
             overwrite_orientation=arguments.overwrite_orientation,
+            identify_stars=arguments.identify_stars,
+            stellar_identification_config=_stellar_identification_config(arguments),
+            overwrite_identifications=arguments.overwrite_identifications,
         )
         detection_state = "cached" if summary.reused_detection_product else "computed"
         tracking_state = "cached" if summary.reused_tracking_product else "computed"
@@ -874,9 +977,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             product_parts = [f"detections {detection_state}"]
             if summary.temporal_tracking_product_path is not None:
                 temporal_state = (
-                    "cached"
-                    if summary.reused_temporal_tracking_product
-                    else "computed"
+                    "cached" if summary.reused_temporal_tracking_product else "computed"
                 )
                 product_parts.append(f"temporal {temporal_state}")
             if summary.stellar_tracking_product_path is not None:
@@ -884,6 +985,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "cached" if summary.reused_stellar_tracking_product else "computed"
                 )
                 product_parts.append(f"stellar {stellar_state}")
+            if summary.stellar_identification_product_path is not None:
+                identification_state = (
+                    "cached"
+                    if summary.reused_stellar_identification_product
+                    else "computed"
+                )
+                product_parts.append(f"identifications {identification_state}")
             product_note = " | ".join(product_parts)
         else:
             product_note = f"detections {detection_state} | tracks {tracking_state}"

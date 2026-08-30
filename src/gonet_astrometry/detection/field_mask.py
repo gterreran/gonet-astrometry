@@ -141,9 +141,7 @@ def load_field_mask(path: Path) -> FieldMask:
                     f"Unsupported field-mask version {version}; expected {_VERSION}"
                 )
             excluded = np.asarray(data["excluded"], dtype=np.bool_)
-            coordinate_convention = _read_scalar_string(
-                data, "coordinate_convention"
-            )
+            coordinate_convention = _read_scalar_string(data, "coordinate_convention")
             description = _read_scalar_string(data, "description")
     except FieldMaskError:
         raise

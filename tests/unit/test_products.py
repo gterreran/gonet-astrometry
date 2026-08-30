@@ -344,6 +344,10 @@ def test_product_store_exposes_orientation_paths(tmp_path: Path) -> None:
     store = ProductStore(tmp_path)
 
     assert store.bright_star_catalog_path == tmp_path / "bright_star_catalog.npz"
+    assert (
+        store.stellar_identifications_path
+        == tmp_path / "stellar_identifications.npz"
+    )
     assert store.orientation_path == tmp_path / "absolute_orientation.npz"
 
 

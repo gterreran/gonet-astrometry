@@ -155,6 +155,16 @@ with ``--reference-image /path/to/frame.jpg``. The selected file only changes
 report rendering; detections, tracks, sidereal rotation, and absolute orientation
 products remain reusable.
 
+Catalog-assisted identification can also be run directly from detections with
+``--identify-stars``. This path loads or fetches the Bright Star Catalogue once,
+uses a V<=3.2 bright subset to bootstrap one common Grid-to-local-ENU attitude,
+refines that rigid three-dimensional rotation with matches from the full sequence,
+and then identifies visible stars independently in every frame down to V<=4.5 by
+default. The portable ``stellar_identifications.npz`` product records expected
+stars, matched detection identifiers, unmatched expected stars, residuals, and
+the fitted attitude. The existing spherical/sidereal tracker is deliberately left
+unchanged while this new association product is validated on full nights.
+
 The fitted rotation pole still leaves one exact camera-attitude twist around the
 celestial axis. Add ``--solve-orientation`` to resolve that final degree of
 freedom by matching de-rotated sidereal-consistent tracks to a cached bright-star
