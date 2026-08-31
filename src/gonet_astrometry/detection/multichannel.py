@@ -60,7 +60,8 @@ class MultiChannelSEPConfig:
     field_edge_keep_margin_px
         Additional full-sensor distance required inside the automatically
         inferred illuminated footprint before a detection is retained. The
-        footprint itself is controlled by :class:`DetectionConfig`, including
+        footprint itself is controlled by
+        :class:`~gonet_astrometry.detection.config.DetectionConfig`, including
         ``footprint_threshold_fraction`` and ``footprint_erosion_px``. A value
         of zero accepts detections anywhere inside that conservative footprint.
         This margin is ignored when automatic footprint detection is disabled.

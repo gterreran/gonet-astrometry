@@ -196,6 +196,15 @@ are cached as ``stellar_camera_identifications.npz``. Hybrid fallback also uses
 the stellar pixel-to-ray model, so the Grid package is not an operational
 dependency once a stellar calibration has been established.
 
+For validation and historical comparison,
+``scripts/compare_grid_stellar_calibrations.py`` samples the common sensor domain
+of a portable Grid and stellar calibration, removes their best rigid 3-D frame
+alignment, and reports the remaining non-rigid angular/pixel discrepancy.  On the
+Adler development data the residual was 29.0 arcmin median and 46.4 arcmin P90
+(8.0/12.6 equivalent full-sensor pixels), dominated by a radial field-angle
+term.  The comparison and its interpretation are documented in
+``docs/source/concepts/stellar_camera_calibration.rst``.
+
 The fitted rotation pole still leaves one exact camera-attitude twist around the
 celestial axis. Add ``--solve-orientation`` to resolve that final degree of
 freedom by matching de-rotated sidereal-consistent tracks to a cached bright-star

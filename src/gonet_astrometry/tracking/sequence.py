@@ -20,7 +20,8 @@ class DetectionEpoch:
     Parameters
     ----------
     frame_identifier
-        Stable identifier matching :attr:`DetectionCatalog.frame_identifier`.
+        Stable identifier matching
+        ``DetectionCatalog.frame_identifier``.
     source_path
         Source GONet image path.
     exposure_midpoint

@@ -22,6 +22,19 @@ Common detection diagnostics
 .. automodule:: gonet_astrometry.detection.diagnostics
    :members:
 
+
+Static field masks
+------------------
+
+.. automodule:: gonet_astrometry.detection.field_mask
+   :members:
+
+Bayer-aware multichannel detection
+----------------------------------
+
+.. automodule:: gonet_astrometry.detection.multichannel
+   :members:
+
 Bayer-aware preprocessing
 -------------------------
 

@@ -1,8 +1,9 @@
 """Sidereal-consistent bootstrap and temporal-fragment merging.
 
 This module promotes the validated ``robust_fit_and_merge_temporal_tracks.py``
-workflow into the package while reusing :class:`SiderealAxisFitter` for the
-actual common-axis optimization.
+workflow into the package while reusing
+:class:`~gonet_astrometry.solving.sidereal.SiderealAxisFitter` for the actual
+common-axis optimization.
 
 The workflow is:
 

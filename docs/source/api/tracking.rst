@@ -32,6 +32,13 @@ Image-plane bootstrap tracking
 .. automodule:: gonet_astrometry.tracking.image_plane
    :members:
 
+
+Spherical temporal tracking
+---------------------------
+
+.. automodule:: gonet_astrometry.tracking.spherical
+   :members:
+
 Catalog stellar identification
 ------------------------------
 

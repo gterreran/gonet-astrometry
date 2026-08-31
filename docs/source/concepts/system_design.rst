@@ -30,7 +30,10 @@ calibration-target imperfections. Once a portable stellar calibration exists,
 new observing sequences use it directly for multichannel detection geometry,
 per-frame catalog projection, and optional spherical fallback tracking; the Grid
 package is not loaded. See :doc:`stellar_camera_calibration` for the empirical
-model-selection evidence and production fitting policy.
+model-selection evidence, production fitting policy, and the final post-hoc
+Grid-versus-stellar comparison.  That comparison removes the best rigid frame
+alignment before evaluating residual geometry, so it is a diagnostic of
+non-rigid mapping disagreement rather than coordinate-convention differences.
 
 Architecture boundaries
 -----------------------

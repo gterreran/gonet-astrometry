@@ -47,6 +47,19 @@ Milestone 5: direct stellar camera calibration
 * restrict the production fit to dark-time, high-altitude stellar measurements;
 * export a versioned, pickle-free stellar camera calibration with provenance.
 
-The remaining integration work is to allow an existing stellar camera
-calibration to replace the Grid bootstrap entirely for normal catalog matching
-and tracking.
+This milestone is complete.  Once ``stellar_camera_calibration.npz`` exists,
+``--stellar-calibration`` replaces Grid geometry entirely for normal catalog
+projection, one-to-one stellar identification, catalog tracking, and optional
+hybrid fallback tracking.  The Grid remains only as a commissioning/bootstrap
+tool for a camera that does not yet have a stellar calibration.
+
+Milestone 6: calibration-workflow portal
+-----------------------------------------
+
+* redesign the portal around user workflows rather than exposing CLI flags one
+  control at a time;
+* distinguish camera commissioning (Grid bootstrap -> first stellar calibration)
+  from normal operation with an existing stellar calibration;
+* expose calibration-product selection, cache/provenance state, catalog
+  identification, and validation diagnostics coherently;
+* keep all numerical calibration and matching logic in the GUI-independent core.

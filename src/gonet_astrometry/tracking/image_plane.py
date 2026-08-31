@@ -54,7 +54,11 @@ class ImagePlaneTrackingResult:
         return counts
 
     def resolve(self, track: StarTrack) -> tuple[ResolvedTrackPoint, ...]:
-        """Resolve lightweight :class:`TrackPoint` references into detections."""
+        """Resolve lightweight track references into detections.
+
+        The references are :class:`~gonet_astrometry.models.track.TrackPoint`
+        instances stored in the returned stellar tracks.
+        """
         epoch_by_id = {
             epoch.frame_identifier: (index, epoch)
             for index, epoch in enumerate(self.sequence.epochs)

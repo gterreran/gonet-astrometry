@@ -19,6 +19,10 @@ project intends to follow semantic versioning once the public API stabilizes.
 
 ### Added
 
+- Standalone Grid-versus-stellar calibration comparison that removes the best
+  rigid frame alignment before mapping the remaining non-rigid angular, radial,
+  tangential, and equivalent-pixel discrepancy; documentation now records the
+  Adler comparison and its diagnostic figures.
 - Direct reuse of ``stellar_camera_calibration.npz`` on later observing nights
   through ``--stellar-calibration``. Calibrated runs perform multichannel SEP
   detection, per-frame catalog projection/matching, catalog-labelled tracking,

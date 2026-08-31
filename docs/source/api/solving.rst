@@ -7,6 +7,13 @@ Shared sidereal rotation
 .. automodule:: gonet_astrometry.solving.sidereal
    :members:
 
+
+Sidereal track merging
+----------------------
+
+.. automodule:: gonet_astrometry.solving.stellar_tracks
+   :members:
+
 Absolute camera orientation
 ---------------------------
 

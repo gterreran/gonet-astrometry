@@ -67,6 +67,86 @@ models immediately reached approximately two-pixel held-out performance.  The
 Grid was therefore an excellent bootstrap geometry, but not the simplest
 intrinsic description of the camera.
 
+Post-hoc Grid-versus-stellar comparison
+----------------------------------------
+
+After the direct stellar calibration had been validated, the two portable
+calibrations were compared geometrically as a final diagnostic.  The comparison
+sampled the same raw full-sensor positions over the common calibrated domain,
+converted each position independently to a unit ray with the Grid and stellar
+models, and removed the single best-fitting proper 3-D rotation between the two
+ray fields.  Removing that rigid rotation is essential because the native Grid
+frame and the sensor-aligned stellar camera frame have different arbitrary axis
+conventions.  The remaining residual therefore measures only *non-rigid*
+disagreement between the two mappings.
+
+For the Adler development calibration, 2,026 common sensor samples covered
+stellar-camera field angles from 0.15 to 60.40 deg.  The best rigid alignment was
+``57.403 deg``, independently reproducing the approximately ``57.42 deg``
+sensor-frame rotation recovered during the stellar model sweep.  After that
+alignment, the residual disagreement was:
+
+===============================  ==========  ==========  ==========  ==========
+Quantity                         Median      P90         P99         Maximum
+===============================  ==========  ==========  ==========  ==========
+Angular discrepancy [arcmin]       29.018      46.366      58.881      60.382
+Equivalent stellar pixels           8.003      12.647      15.706      16.003
+===============================  ==========  ==========  ==========  ==========
+
+The disagreement is strongly field dependent.  It is only a few arcminutes near
+the optical center, then grows smoothly toward the outer field, where the P90
+approaches one degree.  The tangent-plane decomposition is predominantly radial:
+the P90 absolute radial component is ``45.732 arcmin``, compared with only
+``12.694 arcmin`` tangentially.  With the sign convention used by the diagnostic,
+the dominant negative radial residual means that, after rigid alignment, the Grid
+maps a given raw sensor radius to a systematically smaller field angle than the
+stellar model over much of the field.
+
+.. figure:: ../_static/grid_vs_stellar_angular_map.png
+   :alt: Grid-versus-stellar angular discrepancy across the common sensor domain
+   :width: 100%
+
+   Angular discrepancy after removing the best rigid Grid-to-camera rotation
+   (left), and the equivalent displacement expressed in the stellar camera's raw
+   pixel geometry (right).  Displayed vectors are enlarged 6.7 times.
+
+.. figure:: ../_static/grid_vs_stellar_residual_profile.png
+   :alt: Grid-versus-stellar discrepancy versus field angle and radial/tangential components
+   :width: 100%
+
+   The non-rigid disagreement grows strongly with field angle and is dominated
+   by the radial component.  The smaller tangential structure shows that the
+   residual cannot be described by one global radial scale alone.
+
+This result explains why the Grid worked well as a bootstrap while remaining a
+poor final camera model.  The equivalent P90 discrepancy is about ``12.6 px``,
+which is mostly inside the conservative 15 px gate used to establish the first
+stellar correspondences.  At the same time, it is far larger than the roughly
+``1.9 px`` grouped-star P90 of the final stellar calibration, and the outer-field
+tail reaches and exceeds the original association gate.  Direct stellar
+rematching is therefore expected to preserve most Grid-assisted identities while
+correcting a smaller population of outer-field or otherwise ambiguous matches,
+which is exactly what was observed.
+
+The comparison should be interpreted as an *effective Grid error field*, not a
+metrology measurement of the printed target alone.  It cannot uniquely separate
+printed ring/spoke tolerances, target placement or warping, imperfections in the
+Grid fit, measurement error, or any physical camera change between calibration
+acquisitions.  The strongly radial pattern is consistent with ring-radius or
+scale-like target effects, while the smaller tangential structure is consistent
+with spoke/twist/placement asymmetries, but those causes are not individually
+identified by this experiment.
+
+The diagnostic is reproducible with the standalone script::
+
+   python scripts/compare_grid_stellar_calibrations.py \
+       --grid-calibration /path/to/grid_calibration.npz \
+       --stellar-calibration /path/to/stellar_camera_calibration.npz \
+       --output-dir /path/to/grid_vs_stellar_comparison
+
+It writes a PDF report, the two documentation PNGs shown above, a CSV containing
+every sampled sensor position, and a JSON numerical summary.
+
 Chosen intrinsic model
 ----------------------
 
@@ -153,15 +233,40 @@ The final production fit uses:
 These limits were selected empirically rather than only by astronomical
 convention.  With the Grid-free ``poly3`` model, grouped-star validation gave:
 
-==================  ============  =====  ================  =============
-Selection           Measurements  Stars  Median [arcmin]  P90 [arcmin]
-==================  ============  =====  ================  =============
-All retained              13,110     81             2.982          6.807
-Sun <= -12 deg            12,548     80             2.962          6.680
-Sun <= -18 deg            11,222     77             2.923          6.438
-Sun <= -24 deg             9,886     72             2.844          6.104
-Sun <= -18, Alt >=30      10,942     73             2.795          6.417
-==================  ============  =====  ================  =============
+.. list-table::
+   :header-rows: 1
+   :widths: 26 18 10 20 18
+
+   * - Selection
+     - Measurements
+     - Stars
+     - Median [arcmin]
+     - P90 [arcmin]
+   * - All retained
+     - 13,110
+     - 81
+     - 2.982
+     - 6.807
+   * - Sun <= -12 deg
+     - 12,548
+     - 80
+     - 2.962
+     - 6.680
+   * - Sun <= -18 deg
+     - 11,222
+     - 77
+     - 2.923
+     - 6.438
+   * - Sun <= -24 deg
+     - 9,886
+     - 72
+     - 2.844
+     - 6.104
+   * - Sun <= -18, Alt >=30
+     - 10,942
+     - 73
+     - 2.795
+     - 6.417
 
 The monotonic twilight improvement is consistent with reduced centroid
 precision in bright sky: higher sky background increases photon noise in the

@@ -40,6 +40,29 @@ nitpick_ignore = [
     ("py:class", "numpy.bool_"),
     ("py:class", "numpy.float64"),
     ("py:class", "numpy.uint8"),
+    # ``sphinx-autodoc-typehints`` emits class references for several valid
+    # aliases used in public annotations even though they are not Python
+    # classes with inventory targets.
+    ("py:class", "NDArray"),
+    ("py:class", "np.bool_"),
+    ("py:class", "np.float64"),
+    ("py:class", "np.uint8"),
+    ("py:class", "Path"),
+    ("py:class", "GONetChannel"),
+    ("py:class", "SolarAltitudeProvider"),
+    ("py:class", "CatalogRayProvider"),
+    # Autodoc may render the private protocol as its local short name in the
+    # public detector constructor signature.
+    ("py:class", "_PreparedDetector"),
+    # Private structural protocols deliberately remain implementation details.
+    (
+        "py:class",
+        "gonet_astrometry.adapters.grid_calibration._GridEvaluator",
+    ),
+    (
+        "py:class",
+        "gonet_astrometry.detection.multichannel._PreparedDetector",
+    ),
 ]
 
 # Dash and Plotly do not publish complete Sphinx inventories for the public
